@@ -1,0 +1,16 @@
+[project]
+name = "csvdb-tests"
+version = "0.1.0"
+description = "Functional tests for csvdb CLI"
+requires-python = ">=3.10"
+dependencies = [
+    "pytest>=7.0",
+    "duckdb>=0.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

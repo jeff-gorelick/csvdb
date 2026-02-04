@@ -1,0 +1,21 @@
+# Normalize line endings
+* text=auto
+
+# Rust source files
+*.rs text eol=lf
+
+# Python source files
+*.py text eol=lf
+
+# Config files
+*.toml text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.csv text eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+
+# Windows batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf

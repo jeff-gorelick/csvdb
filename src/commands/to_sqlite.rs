@@ -1,0 +1,317 @@
+use anyhow::{bail, Context, Result};
+use indicatif::{ProgressBar, ProgressStyle};
+use rusqlite::Connection;
+use std::fs;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::core::Schema;
+use crate::core::csv::read_table_csv;
+use crate::TableFilter;
+
+/// Convert a .csvdb directory to a SQLite database.
+pub fn to_sqlite(csvdb_dir: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+    let schema_path = csvdb_dir.join("schema.sql");
+    let schema = Schema::from_schema_sql(&schema_path)?;
+
+    // Determine output path: remove .csvdb extension, add .sqlite
+    let dir_name = csvdb_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("database");
+
+    let db_name = if dir_name.ends_with(".csvdb") {
+        format!("{}.sqlite", dir_name.strip_suffix(".csvdb").unwrap())
+    } else {
+        "database.sqlite".to_string()
+    };
+
+    let db_path = csvdb_dir.parent().unwrap_or(Path::new(".")).join(db_name);
+
+    // Check for existing database
+    if db_path.exists() {
+        if !force {
+            bail!(
+                "Output file already exists: {}\nUse --force to overwrite.",
+                db_path.display()
+            );
+        }
+        fs::remove_file(&db_path)?;
+    }
+
+    // Try to use sqlite3 CLI for fast import, fall back to rusqlite if unavailable
+    if sqlite3_available() {
+        to_sqlite_via_cli(csvdb_dir, &db_path, &schema_path, &schema, filter)
+    } else {
+        to_sqlite_via_rusqlite(csvdb_dir, &db_path, &schema_path, &schema, filter)
+    }
+}
+
+/// Check if sqlite3 CLI is available
+fn sqlite3_available() -> bool {
+    Command::new("sqlite3")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Fast import using sqlite3 CLI's .import command
+fn to_sqlite_via_cli(
+    csvdb_dir: &Path,
+    db_path: &Path,
+    schema_path: &Path,
+    schema: &Schema,
+    filter: &TableFilter,
+) -> Result<PathBuf> {
+    use std::io::Write;
+
+    let abs_db_path = if db_path.is_absolute() {
+        db_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(db_path)
+    };
+
+    // Build sqlite3 commands
+    let mut commands = String::new();
+
+    // Read and execute schema
+    let abs_schema_path = schema_path.canonicalize()
+        .with_context(|| format!("Failed to get absolute path: {}", schema_path.display()))?;
+    commands.push_str(&format!(".read '{}'\n", abs_schema_path.display()));
+
+    // Import each CSV file (filtered)
+    commands.push_str(".mode csv\n");
+    for table_name in schema.tables.keys() {
+        if !filter.matches(table_name) {
+            continue;
+        }
+        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+        if csv_path.exists() {
+            let abs_csv_path = csv_path.canonicalize()
+                .with_context(|| format!("Failed to get absolute path: {}", csv_path.display()))?;
+            // .import with --skip 1 to skip header row
+            commands.push_str(&format!(
+                ".import --skip 1 '{}' {}\n",
+                abs_csv_path.display(),
+                table_name
+            ));
+        }
+    }
+
+    // Convert \N markers to actual NULL values.
+    // sqlite3's .nullvalue does not affect .import, so we fix up after import.
+    for (table_name, table_schema) in &schema.tables {
+        if !filter.matches(table_name) {
+            continue;
+        }
+        for col in &table_schema.columns {
+            commands.push_str(&format!(
+                "UPDATE \"{}\" SET \"{}\" = NULL WHERE \"{}\" = '\\N';\n",
+                table_name, col.name, col.name
+            ));
+        }
+    }
+
+    // Run sqlite3 with commands via stdin
+    let mut child = Command::new("sqlite3")
+        .arg(&abs_db_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to start sqlite3")?;
+
+    // Write commands to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(commands.as_bytes())
+            .context("Failed to write to sqlite3 stdin")?;
+    }
+
+    let output = child.wait_with_output()
+        .context("Failed to run sqlite3")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("sqlite3 import failed: {}", stderr);
+    }
+
+    Ok(db_path.to_path_buf())
+}
+
+/// Fallback import using rusqlite (slower but always available)
+fn to_sqlite_via_rusqlite(
+    csvdb_dir: &Path,
+    db_path: &Path,
+    schema_path: &Path,
+    schema: &Schema,
+    filter: &TableFilter,
+) -> Result<PathBuf> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("Failed to create database: {}", db_path.display()))?;
+
+    // Create tables from schema
+    let schema_sql = fs::read_to_string(schema_path)?;
+    for stmt in schema_sql.split(';') {
+        let stmt = stmt.trim();
+        if !stmt.is_empty() {
+            conn.execute(stmt, [])
+                .with_context(|| format!("Failed to execute: {}", stmt))?;
+        }
+    }
+
+    // Import data from CSV files (within a transaction for performance)
+    let pb = if std::io::stderr().is_terminal() {
+        let pb = ProgressBar::new(schema.tables.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{bar:40}] {pos}/{len} {msg}")
+                .unwrap(),
+        );
+        pb
+    } else {
+        ProgressBar::hidden()
+    };
+    conn.execute("BEGIN TRANSACTION", [])?;
+    for (table_name, table_schema) in &schema.tables {
+        if !filter.matches(table_name) {
+            pb.inc(1);
+            continue;
+        }
+        pb.set_message(table_name.clone());
+        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+        if csv_path.exists() {
+            let table = read_table_csv(&csv_path, table_schema)?;
+            table.write_to_sqlite(&conn)?;
+        }
+        pb.inc(1);
+    }
+    conn.execute("COMMIT", [])?;
+    pb.finish_and_clear();
+
+    Ok(db_path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::to_csv::to_csv;
+    use crate::{OrderMode, NullMode, TableFilter};
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_roundtrip() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        // Create test database
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+                [],
+            )?;
+            conn.execute("INSERT INTO users VALUES (1, 'Alice')", [])?;
+            conn.execute("INSERT INTO users VALUES (2, 'Bob')", [])?;
+        }
+
+        // Convert to CSV
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+
+        // Remove original database
+        fs::remove_file(&db_path)?;
+
+        // Rebuild from CSV
+        let rebuilt_path = to_sqlite(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
+
+        // Verify data
+        let conn = Connection::open(&rebuilt_path)?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
+        assert_eq!(count, 2);
+
+        let name: String = conn.query_row(
+            "SELECT name FROM users WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(name, "Alice");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_output_path_csvdb_suffix() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("foo.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+
+        let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("foo.sqlite"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_output_path_no_suffix() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("bar");
+        fs::create_dir(&csvdb_dir)?;
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+
+        let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("database.sqlite"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_force_overwrites() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("f.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+
+        // First create
+        let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        assert!(db_path.exists());
+
+        // Force overwrite should succeed
+        let db_path2 = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        assert!(db_path2.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_force_rejects_existing() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("nf.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+
+        // First create with force
+        to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+
+        // Second create without force should fail
+        let result = to_sqlite(&csvdb_dir, false, &TableFilter::new(vec![], vec![]));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("--force"));
+        Ok(())
+    }
+}

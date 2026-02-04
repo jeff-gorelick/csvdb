@@ -1,0 +1,35 @@
+# Build artifacts
+/target
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local settings
+.claude/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Test artifacts (not fixtures)
+/test_run/
+*.duckdb
+!test_data/**/*.duckdb
+
+# Generated databases (csvdb is source of truth)
+*.sqlite
+!test_data/*.sqlite
+
+# Temp csvdb directories from testing
+*.csvdb
+!test_data/**/*.csvdb
+
+# Lock files (let each platform generate)
+uv.lock
