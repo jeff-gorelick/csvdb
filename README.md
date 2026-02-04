@@ -9,12 +9,13 @@ A deterministic, git-friendly way to store relational data as CSV and convert it
 A `.csvdb` directory contains:
 ```
 mydb.csvdb/
+  csvdb.toml    # format version, export settings
   schema.sql    # CREATE TABLE, CREATE INDEX, CREATE VIEW
   users.csv     # one file per table
   orders.csv
 ```
 
-The schema defines the structure. The CSVs hold the data.
+The schema defines the structure. The CSVs hold the data. `csvdb.toml` records the format version and the settings used to produce the export.
 
 ## Why csvdb
 
