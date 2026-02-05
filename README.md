@@ -187,6 +187,26 @@ csvdb to-csvdb mydb.sqlite --null-mode=literal   # literal "NULL" string
 
 Lossy modes print a warning to stderr. Use `--pipe` to suppress warnings.
 
+## CSV Dialect
+
+csvdb produces a strict, deterministic CSV dialect:
+
+| Property | Value |
+|----------|-------|
+| Encoding | UTF-8 |
+| Delimiter | `,` (comma) |
+| Quote character | `"` (double quote) |
+| Quoting | Always — every field is quoted, including headers |
+| Quote escaping | Doubled (`""`) per RFC 4180 |
+| Record terminator | `\n` (LF), not CRLF |
+| Header row | Always present as the first row |
+| Row ordering | Sorted by primary key (deterministic) |
+| NULL representation | Configurable via `--null-mode` (see above) |
+
+This is mostly RFC 4180 compliant, with one deliberate deviation: line endings use LF instead of CRLF. This produces cleaner git diffs and avoids mixed-endings issues on Unix systems.
+
+Newlines embedded within field values are preserved as-is inside quoted fields. The Rust `csv` crate handles quoting and escaping automatically.
+
 ## Workflows
 
 ### Git-Tracked Data
@@ -365,7 +385,7 @@ cargo run -- checksum mydb.sqlite
 # Rust unit tests
 cargo test
 
-# Python functional tests (128 tests)
+# Python functional tests (151 tests)
 cd tests/functional
 uv run pytest
 
