@@ -1,8 +1,13 @@
 [package]
 name = "csvdb"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Convert between SQLite/DuckDB databases and CSV directories"
+license = "MIT"
+repository = "https://github.com/jeff-gorelick/csvdb"
+readme = "README.md"
+keywords = ["csv", "sqlite", "duckdb", "git", "database"]
+categories = ["command-line-utilities", "database"]
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
