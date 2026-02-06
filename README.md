@@ -284,6 +284,41 @@ This is mostly RFC 4180 compliant, with one deliberate deviation: line endings u
 
 Newlines embedded within field values are preserved as-is inside quoted fields. The Rust `csv` crate handles quoting and escaping automatically.
 
+See [FORMAT.md](FORMAT.md) for the full normative format specification.
+
+## Gotchas
+
+Things that may surprise you on day one:
+
+- **String-based sorting.** PK sort is lexicographic on strings, not numeric. `"10"` sorts before `"2"`. If you need numeric order, use a zero-padded string or an INTEGER primary key (integers sort correctly because shorter strings come first and same-length digit strings sort numerically).
+
+- **Schema inference is limited.** `csvdb init` only infers three types: `INTEGER`, `REAL`, `TEXT`. It won't detect dates, booleans, or blobs. Edit `schema.sql` after init if you need richer types.
+
+- **PK detection stops tracking at 100k values.** During `init`, uniqueness tracking for primary key candidates stops after 100,000 values. If the column was unique up to that point, it's still used as the PK.
+
+- **Float precision in checksums.** Values are normalized to 10 decimal places for checksumming. `42.0` normalizes to `42` (integer-valued floats become integers). Very small precision differences across databases are absorbed.
+
+- **DuckDB empty string limitation.** Empty strings in TEXT columns may become NULL when round-tripping through DuckDB due to a Rust driver limitation.
+
+- **Blob values are hex strings in CSV.** BLOB data is stored as lowercase hex (e.g. `cafe`). It roundtrips correctly through SQLite and DuckDB.
+
+- **No duplicate PK validation during CSV read.** Duplicate primary keys are not caught when reading CSV files. They will cause an error at database INSERT time.
+
+- **DuckDB indexes are not exported.** Index metadata is not available from DuckDB sources. Indexes defined in a csvdb `schema.sql` are preserved when converting between csvdb and SQLite, but not when the source is DuckDB.
+
+- **Views are not dependency-ordered.** Views are written in alphabetical order. If view A references view B, you may need to manually reorder them in `schema.sql`.
+
+- **`__csvdb_rowid` is reserved.** The column name `__csvdb_rowid` is used by the `add-synthetic-key` order mode. Don't use it in your own schemas.
+
+## Examples
+
+The [`examples/`](examples/) directory contains ready-to-use examples:
+
+- **`examples/store.csvdb/`** — A hand-written csvdb directory with two tables, an index, a view, and NULL values
+- **`examples/raw-csvs/`** — Plain CSV files for demonstrating `csvdb init`
+
+See [`examples/README.md`](examples/README.md) for usage instructions.
+
 ## Workflows
 
 ### Git-Tracked Data

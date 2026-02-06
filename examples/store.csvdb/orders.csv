@@ -1,0 +1,6 @@
+"id","customer_id","product","amount","notes"
+"1","1","Widget","9.99","first order"
+"2","1","Gadget","24.50","\N"
+"3","2","Widget","9.99","gift"
+"4","3","Gizmo","149.00","\N"
+"5","5","Gadget","24.50","express shipping"

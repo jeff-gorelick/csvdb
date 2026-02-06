@@ -30,6 +30,7 @@ __pycache__/
 # Temp csvdb directories from testing
 *.csvdb
 !test_data/**/*.csvdb
+!examples/**/*.csvdb
 
 # Lock files (let each platform generate)
 uv.lock

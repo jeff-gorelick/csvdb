@@ -1,0 +1,6 @@
+id,name,price,category_id
+1,Widget,9.99,1
+2,Gadget,24.50,1
+3,Gizmo,149.00,2
+4,Thingamajig,5.75,2
+5,Doohickey,32.00,3
