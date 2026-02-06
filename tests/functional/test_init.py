@@ -194,7 +194,8 @@ class TestInitEdgeCases:
             'id,value\n'
             '1,"Line1\nLine2"\n'
             '2,"Tab\there"\n'
-            '3,"Quote""inside"\n'
+            '3,"Quote""inside"\n',
+            newline=""
         )
 
         run_csvdb("init", str(csv_dir))
