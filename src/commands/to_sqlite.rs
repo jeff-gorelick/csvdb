@@ -6,28 +6,50 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::core::Schema;
 use crate::core::csv::read_table_csv;
-use crate::TableFilter;
+use crate::core::{InputFormat, Schema};
+use crate::{NullMode, OrderMode, TableFilter};
 
-/// Convert a .csvdb directory to a SQLite database.
-pub fn to_sqlite(csvdb_dir: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+/// Convert any supported format to a SQLite database.
+pub fn to_sqlite(input_path: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+    let input_format = InputFormat::from_path(input_path)?;
+
+    // For non-csvdb formats, convert to csvdb first in a temp directory
+    let (csvdb_dir, _temp_dir) = match input_format {
+        InputFormat::Csvdb => (input_path.to_path_buf(), None),
+        _ => {
+            let temp_dir = tempfile::tempdir()?;
+            let temp_csvdb = temp_dir.path().join("temp.csvdb");
+            crate::commands::to_csv::to_csv(
+                input_path,
+                OrderMode::Pk,
+                NullMode::Marker,
+                Some(&temp_csvdb),
+                true,
+                filter,
+            )?;
+            (temp_csvdb, Some(temp_dir))
+        }
+    };
+
     let schema_path = csvdb_dir.join("schema.sql");
     let schema = Schema::from_schema_sql(&schema_path)?;
 
-    // Determine output path: remove .csvdb extension, add .sqlite
-    let dir_name = csvdb_dir
-        .file_name()
-        .and_then(|n| n.to_str())
+    // Determine output path based on input
+    let stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
         .unwrap_or("database");
+    let stem = stem
+        .strip_suffix(".csvdb")
+        .or_else(|| stem.strip_suffix(".parquetdb"))
+        .unwrap_or(stem);
 
-    let db_name = if dir_name.ends_with(".csvdb") {
-        format!("{}.sqlite", dir_name.strip_suffix(".csvdb").unwrap())
-    } else {
-        "database.sqlite".to_string()
-    };
-
-    let db_path = csvdb_dir.parent().unwrap_or(Path::new(".")).join(db_name);
+    let db_name = format!("{}.sqlite", stem);
+    let db_path = input_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(db_name);
 
     // Check for existing database
     if db_path.exists() {
@@ -42,9 +64,9 @@ pub fn to_sqlite(csvdb_dir: &Path, force: bool, filter: &TableFilter) -> Result<
 
     // Try to use sqlite3 CLI for fast import, fall back to rusqlite if unavailable
     if sqlite3_available() {
-        to_sqlite_via_cli(csvdb_dir, &db_path, &schema_path, &schema, filter)
+        to_sqlite_via_cli(&csvdb_dir, &db_path, &schema_path, &schema, filter)
     } else {
-        to_sqlite_via_rusqlite(csvdb_dir, &db_path, &schema_path, &schema, filter)
+        to_sqlite_via_rusqlite(&csvdb_dir, &db_path, &schema_path, &schema, filter)
     }
 }
 
@@ -268,7 +290,8 @@ mod tests {
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
         let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
-        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("database.sqlite"));
+        // Input "bar" (no .csvdb suffix) -> output "bar.sqlite"
+        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("bar.sqlite"));
         Ok(())
     }
 

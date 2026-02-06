@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use csvdb::commands::{checksum, diff, init, to_csv, to_duckdb, to_sqlite, validate};
+use csvdb::commands::{checksum, diff, init, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate};
 use csvdb::{OrderMode, NullMode, TableFilter};
 
 #[derive(Parser)]
@@ -64,10 +64,10 @@ enum Commands {
         exclude: Vec<String>,
     },
 
-    /// Convert CSV directory to SQLite database
+    /// Convert any format to SQLite database
     ToSqlite {
-        /// Path to .csvdb directory
-        csvdir: PathBuf,
+        /// Path to input file or directory
+        input: PathBuf,
 
         /// Overwrite existing output file
         #[arg(long)]
@@ -82,12 +82,46 @@ enum Commands {
         exclude: Vec<String>,
     },
 
-    /// Convert CSV directory to DuckDB database
+    /// Convert any format to DuckDB database
     ToDuckdb {
-        /// Path to .csvdb directory
-        csvdir: PathBuf,
+        /// Path to input file or directory
+        input: PathBuf,
 
         /// Overwrite existing output file
+        #[arg(long)]
+        force: bool,
+
+        /// Only include these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "exclude")]
+        tables: Vec<String>,
+
+        /// Exclude these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "tables")]
+        exclude: Vec<String>,
+    },
+
+    /// Convert any format to .parquetdb directory
+    ToParquetdb {
+        /// Path to input file or directory
+        input: PathBuf,
+
+        /// Output directory (default: <input>.parquetdb)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// How to order rows in output
+        #[arg(long, value_enum, default_value_t = OrderMode::Pk)]
+        order: OrderMode,
+
+        /// How to represent NULL values (for csvdb output compatibility)
+        #[arg(long, value_enum, default_value_t = NullMode::Marker)]
+        null_mode: NullMode,
+
+        /// Write to temp directory and output only the path (for piping)
+        #[arg(long)]
+        pipe: bool,
+
+        /// Overwrite existing output directory
         #[arg(long)]
         force: bool,
 
@@ -141,13 +175,17 @@ fn main() -> ExitCode {
             let filter = TableFilter::new(tables, exclude);
             run_to_csvdb(&input, output.as_deref(), order, null_mode, pipe, force, &filter)
         }
-        Commands::ToSqlite { csvdir, force, tables, exclude } => {
+        Commands::ToSqlite { input, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
-            run_to_sqlite(&csvdir, force, &filter)
+            run_to_sqlite(&input, force, &filter)
         }
-        Commands::ToDuckdb { csvdir, force, tables, exclude } => {
+        Commands::ToDuckdb { input, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
-            run_to_duckdb(&csvdir, force, &filter)
+            run_to_duckdb(&input, force, &filter)
+        }
+        Commands::ToParquetdb { input, output, order, null_mode, pipe, force, tables, exclude } => {
+            let filter = TableFilter::new(tables, exclude);
+            run_to_parquetdb(&input, output.as_deref(), order, null_mode, pipe, force, &filter)
         }
         Commands::Validate { path } => run_validate(&path),
         Commands::Diff { left, right, summary } => run_diff(&left, &right, summary),
@@ -249,6 +287,29 @@ fn run_to_sqlite(csvdir: &PathBuf, force: bool, filter: &TableFilter) -> Result<
 fn run_to_duckdb(csvdir: &PathBuf, force: bool, filter: &TableFilter) -> Result<ExitCode> {
     let db_path = to_duckdb::to_duckdb(csvdir, force, filter)?;
     println!("Created: {}", db_path.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_to_parquetdb(input: &PathBuf, output: Option<&Path>, order: OrderMode, null_mode: NullMode, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+    let output_path: Option<PathBuf>;
+    let effective_output = if pipe && output.is_none() {
+        let stem = input.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("parquetdb");
+        output_path = Some(std::env::temp_dir().join(format!("{}.parquetdb", stem)));
+        output_path.as_deref()
+    } else {
+        output
+    };
+
+    let parquetdb = to_parquetdb::to_parquetdb(input, order, null_mode, effective_output, pipe || force, filter)?;
+
+    if pipe {
+        let path_str = parquetdb.to_string_lossy().replace('\\', "/");
+        println!("{}", path_str);
+    } else {
+        println!("Created: {}", parquetdb.display());
+    }
     Ok(ExitCode::SUCCESS)
 }
 

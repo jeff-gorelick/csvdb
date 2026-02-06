@@ -5,27 +5,49 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use crate::core::Schema;
-use crate::TableFilter;
+use crate::core::{InputFormat, Schema};
+use crate::{NullMode, OrderMode, TableFilter};
 
-/// Convert a .csvdb directory to a DuckDB database.
-pub fn to_duckdb(csvdb_dir: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+/// Convert any supported format to a DuckDB database.
+pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+    let input_format = InputFormat::from_path(input_path)?;
+
+    // For non-csvdb formats, convert to csvdb first in a temp directory
+    let (csvdb_dir, _temp_dir) = match input_format {
+        InputFormat::Csvdb => (input_path.to_path_buf(), None),
+        _ => {
+            let temp_dir = tempfile::tempdir()?;
+            let temp_csvdb = temp_dir.path().join("temp.csvdb");
+            crate::commands::to_csv::to_csv(
+                input_path,
+                OrderMode::Pk,
+                NullMode::Marker,
+                Some(&temp_csvdb),
+                true,
+                filter,
+            )?;
+            (temp_csvdb, Some(temp_dir))
+        }
+    };
+
     let schema_path = csvdb_dir.join("schema.sql");
     let schema = Schema::from_schema_sql(&schema_path)?;
 
-    // Determine output path: remove .csvdb extension, add .duckdb
-    let dir_name = csvdb_dir
-        .file_name()
-        .and_then(|n| n.to_str())
+    // Determine output path based on input
+    let stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
         .unwrap_or("database");
+    let stem = stem
+        .strip_suffix(".csvdb")
+        .or_else(|| stem.strip_suffix(".parquetdb"))
+        .unwrap_or(stem);
 
-    let db_name = if dir_name.ends_with(".csvdb") {
-        format!("{}.duckdb", dir_name.strip_suffix(".csvdb").unwrap())
-    } else {
-        "database.duckdb".to_string()
-    };
-
-    let db_path = csvdb_dir.parent().unwrap_or(Path::new(".")).join(db_name);
+    let db_name = format!("{}.duckdb", stem);
+    let db_path = input_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(db_name);
 
     // Check for existing database
     if db_path.exists() {
@@ -217,7 +239,8 @@ mod tests {
         std::fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
         let db_path = to_duckdb(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
-        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("database.duckdb"));
+        // Input "bar" (no .csvdb suffix) -> output "bar.duckdb"
+        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("bar.duckdb"));
         Ok(())
     }
 

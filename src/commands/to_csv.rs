@@ -6,40 +6,13 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use crate::core::Schema;
+use crate::core::config::{CURRENT_FORMAT_VERSION, created_by_string};
 use crate::core::csv::write_table_csv;
 use crate::core::table::Table;
-use crate::{OrderMode, NullMode, TableFilter, CsvdbConfig};
-use crate::core::config::{CURRENT_FORMAT_VERSION, created_by_string};
+use crate::core::{InputFormat, Schema};
+use crate::{CsvdbConfig, NullMode, OrderMode, TableFilter};
 
-/// Detected input format type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputFormat {
-    Sqlite,
-    DuckDb,
-}
-
-impl InputFormat {
-    /// Detect input format by examining file extension.
-    pub fn from_path(path: &Path) -> Result<Self> {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase());
-
-        match ext.as_deref() {
-            Some("sqlite") | Some("sqlite3") | Some("db") => Ok(InputFormat::Sqlite),
-            Some("duckdb") => Ok(InputFormat::DuckDb),
-            _ => bail!(
-                "Cannot detect input format for: {}. \
-                 Supported: SQLite (.sqlite, .db), DuckDB (.duckdb).",
-                path.display()
-            ),
-        }
-    }
-}
-
-/// Convert a database (SQLite or DuckDB) to a .csvdb directory.
+/// Convert any supported format to a .csvdb directory.
 ///
 /// If `output_dir` is None, creates a .csvdb directory next to the input file.
 pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, output_dir: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
@@ -48,7 +21,20 @@ pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, out
     // Determine output directory
     let csvdb_dir = match output_dir {
         Some(dir) => dir.to_path_buf(),
-        None => input_path.with_extension("csvdb"),
+        None => {
+            let stem = input_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("database");
+            let stem = stem
+                .strip_suffix(".csvdb")
+                .or_else(|| stem.strip_suffix(".parquetdb"))
+                .unwrap_or(stem);
+            input_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(format!("{}.csvdb", stem))
+        }
     };
 
     // Check for existing output
@@ -66,6 +52,9 @@ pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, out
     match input_format {
         InputFormat::Sqlite => export_sqlite(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
         InputFormat::DuckDb => export_duckdb(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
+        InputFormat::Parquetdb => export_parquetdb(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
+        InputFormat::Parquet => export_single_parquet(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
+        InputFormat::Csvdb => bail!("Input is already a csvdb directory"),
     }
 
     // Write csvdb.toml with effective settings
@@ -170,6 +159,120 @@ fn export_duckdb(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
         pb.inc(1);
     }
     pb.finish_and_clear();
+
+    Ok(())
+}
+
+fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, filter: &TableFilter) -> Result<()> {
+    // Load parquetdb into in-memory DuckDB, then export to CSV
+    let conn = DuckDbConnection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    let schema_path = parquetdb_path.join("schema.sql");
+    let schema = Schema::from_schema_sql(&schema_path)?;
+
+    // Create tables from schema
+    let schema_sql = fs::read_to_string(&schema_path)?;
+    for stmt in schema_sql.split(';') {
+        let stmt = stmt.trim();
+        if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
+            conn.execute(stmt, [])
+                .with_context(|| format!("Failed to execute: {}", stmt))?;
+        }
+    }
+
+    // Load parquet data
+    for table_name in schema.tables.keys() {
+        let parquet_path = parquetdb_path.join(format!("{}.parquet", table_name));
+        if parquet_path.exists() {
+            let abs_path = parquet_path.canonicalize()?;
+            let path_str = abs_path.to_string_lossy().replace('\\', "/");
+            let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
+
+            conn.execute(
+                &format!(
+                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
+                    table_name, path_str
+                ),
+                [],
+            )?;
+        }
+    }
+
+    // Write schema.sql (including views and indexes)
+    let out_schema_path = csvdb_dir.join("schema.sql");
+    schema.write_schema_sql(&out_schema_path)?;
+
+    // Export each table to CSV
+    let pb = make_progress_bar(schema.tables.len() as u64);
+    for (table_name, table_schema) in &schema.tables {
+        if !filter.matches(table_name) {
+            pb.inc(1);
+            continue;
+        }
+
+        pb.set_message(table_name.clone());
+        let result = Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?;
+
+        for warning in &result.warnings {
+            eprintln!("Warning: {}", warning);
+        }
+
+        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+        write_table_csv(&result.table, &csv_path)?;
+        pb.inc(1);
+    }
+    pb.finish_and_clear();
+
+    Ok(())
+}
+
+fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, filter: &TableFilter) -> Result<()> {
+    // Load single parquet into in-memory DuckDB
+    let conn = DuckDbConnection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    let table_name = parquet_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("table");
+
+    if !filter.matches(table_name) {
+        bail!("Table '{}' is excluded by filter", table_name);
+    }
+
+    let abs_path = parquet_path.canonicalize()?;
+    let path_str = abs_path.to_string_lossy().replace('\\', "/");
+    let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
+
+    // Create table from parquet
+    conn.execute(
+        &format!(
+            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
+            table_name, path_str
+        ),
+        [],
+    )?;
+
+    // Get schema from DuckDB
+    let schema = Schema::from_duckdb_with_order(&conn, order_mode)?;
+
+    // Write schema.sql
+    let schema_path = csvdb_dir.join("schema.sql");
+    schema.write_schema_sql(&schema_path)?;
+
+    // Export to CSV
+    let table_schema = schema.tables.get(table_name)
+        .ok_or_else(|| anyhow::anyhow!("Table not found after creation"))?;
+
+    let result = Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?;
+
+    for warning in &result.warnings {
+        eprintln!("Warning: {}", warning);
+    }
+
+    let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+    write_table_csv(&result.table, &csv_path)?;
 
     Ok(())
 }

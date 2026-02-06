@@ -4,7 +4,7 @@ use sha2::{Sha256, Digest};
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::core::{Schema, TableSchema};
+use crate::core::{InputFormat, Schema, TableSchema};
 use crate::core::csv::read_table_csv;
 use crate::core::table::Table;
 use crate::{OrderMode, NullMode, TableFilter};
@@ -13,23 +13,14 @@ use crate::{OrderMode, NullMode, TableFilter};
 /// Returns the same hash regardless of format if the data is identical.
 /// Includes: schema (columns, types, PKs), indexes, views, and row data.
 pub fn checksum(path: &Path, filter: &TableFilter) -> Result<String> {
-    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let format = InputFormat::from_path(path)?;
 
-    match extension {
-        "csvdb" => checksum_csvdb(path, filter),
-        "sqlite" | "sqlite3" | "db" => checksum_sqlite(path, filter),
-        "duckdb" => checksum_duckdb(path, filter),
-        _ => {
-            // Check if it's a directory (csvdb without extension)
-            if path.is_dir() && path.join("schema.sql").exists() {
-                checksum_csvdb(path, filter)
-            } else {
-                anyhow::bail!(
-                    "Unknown format: {}. Expected .csvdb, .sqlite, .db, or .duckdb",
-                    path.display()
-                )
-            }
-        }
+    match format {
+        InputFormat::Csvdb => checksum_csvdb(path, filter),
+        InputFormat::Parquetdb => checksum_parquetdb(path, filter),
+        InputFormat::Sqlite => checksum_sqlite(path, filter),
+        InputFormat::DuckDb => checksum_duckdb(path, filter),
+        InputFormat::Parquet => checksum_parquet(path, filter),
     }
 }
 
@@ -136,6 +127,109 @@ fn checksum_duckdb(db_path: &Path, filter: &TableFilter) -> Result<String> {
 
     // Hash views
     hash_views(&mut hasher, &schema);
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn checksum_parquetdb(parquetdb_dir: &Path, filter: &TableFilter) -> Result<String> {
+    // Load parquetdb into in-memory DuckDB, then compute checksum
+    let conn = duckdb::Connection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    let schema_path = parquetdb_dir.join("schema.sql");
+    let schema = Schema::from_schema_sql(&schema_path)?;
+
+    // Create tables from schema
+    let schema_sql = std::fs::read_to_string(&schema_path)?;
+    for stmt in schema_sql.split(';') {
+        let stmt = stmt.trim();
+        if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
+            conn.execute(stmt, [])
+                .with_context(|| format!("Failed to execute: {}", stmt))?;
+        }
+    }
+
+    // Load parquet data
+    for table_name in schema.tables.keys() {
+        let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+        if parquet_path.exists() {
+            let abs_path = parquet_path.canonicalize()?;
+            let path_str = abs_path.to_string_lossy().replace('\\', "/");
+            let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
+
+            conn.execute(
+                &format!(
+                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
+                    table_name, path_str
+                ),
+                [],
+            )?;
+        }
+    }
+
+    let mut hasher = Sha256::new();
+
+    // Hash schema and data (filtered)
+    let pb = make_progress_bar(schema.tables.len() as u64);
+    for (table_name, table_schema) in &schema.tables {
+        if !filter.matches(table_name) {
+            pb.inc(1);
+            continue;
+        }
+        pb.set_message(table_name.clone());
+        hash_table_schema(&mut hasher, table_schema);
+
+        let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        hash_table_data(&mut hasher, &result.table);
+        pb.inc(1);
+    }
+    pb.finish_and_clear();
+
+    // Hash views
+    hash_views(&mut hasher, &schema);
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn checksum_parquet(parquet_path: &Path, filter: &TableFilter) -> Result<String> {
+    // Load single parquet into in-memory DuckDB
+    let conn = duckdb::Connection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    let table_name = parquet_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("table");
+
+    if !filter.matches(table_name) {
+        anyhow::bail!("Table '{}' is excluded by filter", table_name);
+    }
+
+    let abs_path = parquet_path.canonicalize()?;
+    let path_str = abs_path.to_string_lossy().replace('\\', "/");
+    let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
+
+    // Create table from parquet
+    conn.execute(
+        &format!(
+            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
+            table_name, path_str
+        ),
+        [],
+    )?;
+
+    // Get schema from DuckDB
+    let schema = Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
+
+    let mut hasher = Sha256::new();
+
+    let table_schema = schema.tables.get(table_name)
+        .ok_or_else(|| anyhow::anyhow!("Table not found after creation"))?;
+
+    hash_table_schema(&mut hasher, table_schema);
+
+    let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+    hash_table_data(&mut hasher, &result.table);
 
     Ok(format!("{:x}", hasher.finalize()))
 }

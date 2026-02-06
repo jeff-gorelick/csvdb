@@ -1,30 +1,22 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::core::{Schema, Table};
+use crate::core::{InputFormat, Schema, Table};
 use crate::core::csv::read_table_csv;
 use crate::{OrderMode, NullMode};
 
 /// Load tables from any supported format.
 /// Returns (Schema, map of table_name -> Table).
 fn load_tables(path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
-    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let format = InputFormat::from_path(path)?;
 
-    match extension {
-        "csvdb" => load_csvdb(path),
-        "sqlite" | "sqlite3" | "db" => load_sqlite(path),
-        "duckdb" => load_duckdb(path),
-        _ => {
-            if path.is_dir() && path.join("schema.sql").exists() {
-                load_csvdb(path)
-            } else {
-                bail!(
-                    "Unknown format: {}. Expected .csvdb, .sqlite, .db, or .duckdb",
-                    path.display()
-                )
-            }
-        }
+    match format {
+        InputFormat::Csvdb => load_csvdb(path),
+        InputFormat::Parquetdb => load_parquetdb(path),
+        InputFormat::Sqlite => load_sqlite(path),
+        InputFormat::DuckDb => load_duckdb(path),
+        InputFormat::Parquet => load_parquet(path),
     }
 }
 
@@ -94,6 +86,91 @@ fn load_duckdb(db_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
         rebuild_pk_from_schema(&mut table, &schema);
         tables.insert(table_name.clone(), table);
     }
+
+    Ok((schema, tables))
+}
+
+fn load_parquetdb(parquetdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
+    // Load parquetdb into in-memory DuckDB
+    let conn = duckdb::Connection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    let schema_path = parquetdb_dir.join("schema.sql");
+    let schema = Schema::from_schema_sql(&schema_path)?;
+
+    // Create tables from schema
+    let schema_sql = std::fs::read_to_string(&schema_path)?;
+    for stmt in schema_sql.split(';') {
+        let stmt = stmt.trim();
+        if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
+            conn.execute(stmt, [])
+                .with_context(|| format!("Failed to execute: {}", stmt))?;
+        }
+    }
+
+    // Load parquet data
+    for table_name in schema.tables.keys() {
+        let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+        if parquet_path.exists() {
+            let abs_path = parquet_path.canonicalize()?;
+            let path_str = abs_path.to_string_lossy().replace('\\', "/");
+            let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
+
+            conn.execute(
+                &format!(
+                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
+                    table_name, path_str
+                ),
+                [],
+            )?;
+        }
+    }
+
+    let mut tables = BTreeMap::new();
+    for (table_name, table_schema) in &schema.tables {
+        let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let mut table = result.table;
+        rebuild_pk_from_schema(&mut table, &schema);
+        tables.insert(table_name.clone(), table);
+    }
+
+    Ok((schema, tables))
+}
+
+fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
+    // Load single parquet into in-memory DuckDB
+    let conn = duckdb::Connection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    let table_name = parquet_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("table");
+
+    let abs_path = parquet_path.canonicalize()?;
+    let path_str = abs_path.to_string_lossy().replace('\\', "/");
+    let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
+
+    // Create table from parquet
+    conn.execute(
+        &format!(
+            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
+            table_name, path_str
+        ),
+        [],
+    )?;
+
+    // Get schema from DuckDB
+    let schema = Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
+
+    let mut tables = BTreeMap::new();
+    let table_schema = schema.tables.get(table_name)
+        .ok_or_else(|| anyhow::anyhow!("Table not found after creation"))?;
+
+    let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+    let mut table = result.table;
+    rebuild_pk_from_schema(&mut table, &schema);
+    tables.insert(table_name.to_string(), table);
 
     Ok((schema, tables))
 }
