@@ -2,9 +2,9 @@
 
 > **Note:** This is beta software. The API and file format may change. Use with caution in production.
 
-A deterministic, git-friendly way to store relational data as CSV and convert it to SQLite or DuckDB when you need fast queries.
+A deterministic, git-friendly way to store relational data as CSV and convert it to SQLite, DuckDB, or Parquet when you need fast queries.
 
-## csvdb Directory Layout
+## Directory Layouts
 
 A `.csvdb` directory contains:
 ```
@@ -15,7 +15,16 @@ mydb.csvdb/
   orders.csv
 ```
 
-The schema defines the structure. The CSVs hold the data. `csvdb.toml` records the format version and the settings used to produce the export.
+A `.parquetdb` directory has the same structure with Parquet files instead of CSVs:
+```
+mydb.parquetdb/
+  csvdb.toml       # format version, export settings
+  schema.sql       # CREATE TABLE, CREATE INDEX, CREATE VIEW
+  users.parquet    # one file per table
+  orders.parquet
+```
+
+The schema defines the structure. The data files hold the data. `csvdb.toml` records the format version and the settings used to produce the export.
 
 ## Why csvdb
 
@@ -30,7 +39,13 @@ The schema defines the structure. The CSVs hold the data. `csvdb.toml` records t
 - Full SQL query support
 - Single-file distribution
 
-csvdb lets you store data as CSV (human-readable, git-friendly) and convert to SQLite or DuckDB when you need query performance.
+**Parquet format** provides columnar storage:
+- Efficient compression and encoding
+- Fast analytical queries
+- Wide ecosystem support (Spark, pandas, DuckDB, etc.)
+- Per-table `.parquet` files in a `.parquetdb` directory
+
+csvdb lets you store data as CSV (human-readable, git-friendly) and convert to SQLite, DuckDB, or Parquet when you need query performance.
 
 ## Installation
 
@@ -51,6 +66,9 @@ vim mydb.csvdb/users.csv
 
 # Rebuild database
 csvdb to-sqlite mydb.csvdb/
+
+# Or export to Parquet
+csvdb to-parquetdb mydb.csvdb/
 ```
 
 ## Commands
@@ -77,6 +95,10 @@ csvdb to-csvdb mydb.sqlite
 
 # From DuckDB
 csvdb to-csvdb mydb.duckdb
+
+# From Parquet
+csvdb to-csvdb mydb.parquetdb/
+csvdb to-csvdb single_table.parquet
 ```
 
 Creates `mydb.csvdb/` containing:
@@ -86,6 +108,8 @@ Creates `mydb.csvdb/` containing:
 Supports multiple input formats:
 - **SQLite** (`.sqlite`, `.sqlite3`, `.db`)
 - **DuckDB** (`.duckdb`)
+- **parquetdb** (`.parquetdb` directory)
+- **Parquet** (`.parquet` single file)
 
 Options:
 - `-o, --output <dir>` - Custom output directory
@@ -93,21 +117,70 @@ Options:
 - `--null-mode <mode>` - NULL representation in CSV (see below)
 - `--pipe` - Write to temp directory, output only path (for piping)
 
-### to-sqlite — Build SQLite database from csvdb
+### to-sqlite — Build SQLite database
 
 ```bash
 csvdb to-sqlite mydb.csvdb/
+csvdb to-sqlite mydb.parquetdb/
 ```
 
-Creates `mydb.sqlite` from the schema and CSV files.
+Creates `mydb.sqlite` from a csvdb or parquetdb directory.
 
-### to-duckdb — Build DuckDB database from csvdb
+Options:
+- `--force` - Overwrite existing output file
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
+
+### to-duckdb — Build DuckDB database
 
 ```bash
 csvdb to-duckdb mydb.csvdb/
+csvdb to-duckdb mydb.parquetdb/
 ```
 
-Creates `mydb.duckdb` from the schema and CSV files.
+Creates `mydb.duckdb` from a csvdb or parquetdb directory.
+
+Options:
+- `--force` - Overwrite existing output file
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
+
+### to-parquetdb — Convert any format to Parquet
+
+```bash
+# From SQLite
+csvdb to-parquetdb mydb.sqlite
+
+# From DuckDB
+csvdb to-parquetdb mydb.duckdb
+
+# From csvdb
+csvdb to-parquetdb mydb.csvdb/
+
+# From a single Parquet file
+csvdb to-parquetdb users.parquet
+```
+
+Creates `mydb.parquetdb/` containing:
+- `schema.sql` - table definitions, indexes, views
+- `csvdb.toml` - format version and export settings
+- `*.parquet` - one Parquet file per table
+
+Supports multiple input formats:
+- **SQLite** (`.sqlite`, `.sqlite3`, `.db`)
+- **DuckDB** (`.duckdb`)
+- **csvdb** (`.csvdb` directory)
+- **parquetdb** (`.parquetdb` directory)
+- **Parquet** (`.parquet` single file)
+
+Options:
+- `-o, --output <dir>` - Custom output directory
+- `--order <mode>` - Row ordering mode (see below)
+- `--null-mode <mode>` - NULL representation (see below)
+- `--pipe` - Write to temp directory, output only path (for piping)
+- `--force` - Overwrite existing output directory
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
 
 ### checksum — Verify data integrity
 
@@ -115,6 +188,8 @@ Creates `mydb.duckdb` from the schema and CSV files.
 csvdb checksum mydb.sqlite
 csvdb checksum mydb.csvdb/
 csvdb checksum mydb.duckdb
+csvdb checksum mydb.parquetdb/
+csvdb checksum users.parquet
 ```
 
 Computes a SHA-256 checksum of the database content. The checksum is:
@@ -124,10 +199,12 @@ Computes a SHA-256 checksum of the database content. The checksum is:
 
 Use checksums to verify roundtrip conversions:
 ```bash
-csvdb checksum original.sqlite   # a1b2c3...
+csvdb checksum original.sqlite       # a1b2c3...
 csvdb to-csvdb original.sqlite
 csvdb to-duckdb original.csvdb/
-csvdb checksum original.duckdb   # a1b2c3... (same!)
+csvdb checksum original.duckdb       # a1b2c3... (same!)
+csvdb to-parquetdb original.csvdb/
+csvdb checksum original.parquetdb/   # a1b2c3... (same!)
 ```
 
 ## Primary Key Requirement
@@ -286,6 +363,9 @@ Use `--pipe` for one-liner conversions:
 ```bash
 # SQLite → DuckDB via pipe
 csvdb to-csvdb mydb.sqlite --pipe | xargs csvdb to-duckdb
+
+# SQLite → Parquet via pipe
+csvdb to-parquetdb mydb.sqlite --pipe | xargs csvdb to-duckdb
 ```
 
 The `--pipe` flag:
@@ -306,9 +386,16 @@ csvdb to-duckdb legacy.csvdb/
 csvdb to-csvdb analytics.duckdb
 csvdb to-sqlite analytics.csvdb/
 
+# SQLite to Parquet
+csvdb to-parquetdb legacy.sqlite
+
+# Parquet to SQLite
+csvdb to-sqlite legacy.parquetdb/
+
 # Verify no data loss
 csvdb checksum legacy.sqlite
 csvdb checksum legacy.duckdb
+csvdb checksum legacy.parquetdb/
 # Checksums match = data preserved
 ```
 
@@ -352,14 +439,18 @@ src/
   lib.rs
   commands/
     init.rs            # CSV files -> csvdb (schema inference)
-    to_csv.rs          # SQLite/DuckDB -> csvdb
-    to_sqlite.rs       # csvdb -> SQLite
-    to_duckdb.rs       # csvdb -> DuckDB
+    to_csv.rs          # any format -> csvdb
+    to_sqlite.rs       # any format -> SQLite
+    to_duckdb.rs       # any format -> DuckDB
+    to_parquetdb.rs    # any format -> parquetdb (Parquet)
     checksum.rs        # Format-independent checksums
+    validate.rs        # Structural integrity checks
+    diff.rs            # Compare two databases
   core/
     schema.rs          # Parse/emit schema.sql, type normalization
     table.rs           # Row operations, PK handling
     csv.rs             # Deterministic CSV I/O
+    input.rs           # Input format detection
 
 tests/
   functional/
@@ -376,6 +467,7 @@ cargo run -- init ./raw_csvs/
 cargo run -- to-csvdb mydb.sqlite
 cargo run -- to-sqlite mydb.csvdb/
 cargo run -- to-duckdb mydb.csvdb/
+cargo run -- to-parquetdb mydb.sqlite
 cargo run -- checksum mydb.sqlite
 ```
 
