@@ -351,7 +351,7 @@ fn hash_table_data(hasher: &mut Sha256, table: &Table) {
 }
 
 /// Normalize a value for consistent hashing across databases
-fn normalize_value(value: &str) -> String {
+pub fn normalize_value(value: &str) -> String {
     if value.is_empty() {
         return String::new(); // NULL/empty stays empty
     }

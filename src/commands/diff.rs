@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::core::{InputFormat, Schema, Table};
 use crate::core::csv::read_table_csv;
+use crate::commands::checksum::normalize_value;
 use crate::{OrderMode, NullMode};
 
 /// Load tables from any supported format.
@@ -235,8 +236,11 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool) -> Result<bool> 
                 None => deleted.push(pk.clone()),
                 Some(right_row) => {
                     if left_row.content_hash() != right_row.content_hash() {
-                        // Confirm actual difference (hash collision guard)
-                        if left_row.values != right_row.values {
+                        // Compare with normalized values to ignore float formatting differences
+                        let values_differ = left_row.values.iter()
+                            .zip(right_row.values.iter())
+                            .any(|(lv, rv)| normalize_value(lv) != normalize_value(rv));
+                        if values_differ {
                             modified.push(pk.clone());
                         }
                     }
@@ -356,7 +360,7 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool) -> Result<bool> 
                 .zip(right_row.values.iter())
                 .enumerate()
             {
-                if lv != rv {
+                if normalize_value(lv) != normalize_value(rv) {
                     let col_name = left_table
                         .columns
                         .get(i)
@@ -459,6 +463,32 @@ mod tests {
 
         let has_diff = diff(&left, &right, false)?;
         assert!(has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_ignores_float_formatting() -> Result<()> {
+        let dir = tempdir()?;
+        let schema = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"price\" REAL\n);\n";
+        // Same numeric values, different string representations
+        let left = make_csvdb(dir.path(), "a.csvdb", schema, &[("t", "id,price\n1,32\n2,24.5\n3,149\n")]);
+        let right = make_csvdb(dir.path(), "b.csvdb", schema, &[("t", "id,price\n1,32.00\n2,24.50\n3,149.00\n")]);
+
+        let has_diff = diff(&left, &right, false)?;
+        assert!(!has_diff, "float formatting differences should be ignored");
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_detects_real_change_with_float_noise() -> Result<()> {
+        let dir = tempdir()?;
+        let schema = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"price\" REAL,\n    \"category_id\" INTEGER\n);\n";
+        // price differs only in formatting, but category_id has a real change
+        let left = make_csvdb(dir.path(), "a.csvdb", schema, &[("t", "id,price,category_id\n1,32,3\n")]);
+        let right = make_csvdb(dir.path(), "b.csvdb", schema, &[("t", "id,price,category_id\n1,32.00,32\n")]);
+
+        let has_diff = diff(&left, &right, false)?;
+        assert!(has_diff, "real data change should be detected despite float noise");
         Ok(())
     }
 

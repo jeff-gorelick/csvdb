@@ -107,6 +107,57 @@ class TestDiff:
         assert len(detail_lines) == 0
 
 
+    def test_diff_normalizes_float_formatting(self, run_csvdb, temp_dir):
+        """Diff ignores float formatting differences across formats (e.g. 32 vs 32.00)."""
+        db_path = temp_dir / "floats.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)")
+        conn.execute("INSERT INTO products VALUES (1, 'Widget', 9.99)")
+        conn.execute("INSERT INTO products VALUES (2, 'Gadget', 24.50)")
+        conn.execute("INSERT INTO products VALUES (3, 'Gizmo', 149.00)")
+        conn.execute("INSERT INTO products VALUES (4, 'Thing', 32.00)")
+        conn.commit()
+        conn.close()
+
+        csvdb_dir = temp_dir / "floats.csvdb"
+        parquetdb_dir = temp_dir / "floats.parquetdb"
+        run_csvdb("to-csvdb", str(db_path), "-o", str(csvdb_dir), "--force")
+        run_csvdb("to-parquetdb", str(db_path), "-o", str(parquetdb_dir), "--force")
+
+        result = run_csvdb("diff", str(parquetdb_dir), str(csvdb_dir))
+        assert result.returncode == 0
+        assert "identical" in result.stdout
+
+    def test_diff_detects_real_change_despite_float_noise(self, run_csvdb, temp_dir):
+        """Diff still detects actual value changes even when float noise is present."""
+        db_path = temp_dir / "base.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL, category_id INTEGER)")
+        conn.execute("INSERT INTO products VALUES (1, 'Widget', 9.99, 1)")
+        conn.execute("INSERT INTO products VALUES (2, 'Gadget', 24.50, 1)")
+        conn.commit()
+        conn.close()
+
+        # Export to parquetdb (float formatting may differ)
+        parquetdb_dir = temp_dir / "base.parquetdb"
+        run_csvdb("to-parquetdb", str(db_path), "-o", str(parquetdb_dir), "--force")
+
+        # Export to csvdb, then manually change category_id
+        csvdb_dir = temp_dir / "base.csvdb"
+        run_csvdb("to-csvdb", str(db_path), "-o", str(csvdb_dir), "--force")
+
+        csv_path = csvdb_dir / "products.csv"
+        content = csv_path.read_text()
+        # Change category_id from 1 to 99 for Gadget (id=2)
+        content = content.replace('"2","Gadget","24.5","1"', '"2","Gadget","24.5","99"')
+        csv_path.write_text(content)
+
+        result = run_csvdb("diff", str(parquetdb_dir), str(csvdb_dir), check=False)
+        assert result.returncode == 1
+        assert "1 modified" in result.stdout
+        assert "category_id" in result.stdout
+
+
 class TestDiffEdgeCases:
     def test_diff_empty_tables(self, run_csvdb, temp_dir):
         """Both sides have 0-row tables -> identical."""
