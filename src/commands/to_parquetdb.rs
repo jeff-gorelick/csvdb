@@ -205,14 +205,18 @@ fn load_sqlite(conn: &Connection, path: &Path) -> Result<Schema> {
 }
 
 fn load_duckdb(conn: &Connection, path: &Path) -> Result<Schema> {
-    let src_conn = Connection::open(path)
-        .with_context(|| format!("Failed to open DuckDB database: {}", path.display()))?;
-
-    let schema = Schema::from_duckdb(&src_conn)?;
+    // Scope the connection so it's dropped before ATTACH (avoids Windows file lock)
+    let schema = {
+        let src_conn = Connection::open(path)
+            .with_context(|| format!("Failed to open DuckDB database: {}", path.display()))?;
+        Schema::from_duckdb(&src_conn)?
+    };
 
     // Attach and copy data
     let abs_path = path.canonicalize()?;
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
+    // Strip Windows UNC prefix (//?/) that canonicalize() adds
+    let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
     conn.execute(&format!("ATTACH '{}' AS src", path_str), [])?;
 
