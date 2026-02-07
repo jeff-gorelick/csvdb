@@ -64,11 +64,13 @@ pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result
         .with_context(|| format!("Failed to create database: {}", db_path.display()))?;
 
     // Create tables from schema
+    // Replace REAL with DOUBLE to avoid 32-bit precision loss in DuckDB
     let schema_sql = fs::read_to_string(&schema_path)?;
     for stmt in schema_sql.split(';') {
         let stmt = stmt.trim();
         if !stmt.is_empty() {
-            conn.execute(stmt, [])
+            let stmt = stmt.replace(" REAL", " DOUBLE");
+            conn.execute(&stmt, [])
                 .with_context(|| format!("Failed to execute: {}", stmt))?;
         }
     }

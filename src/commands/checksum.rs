@@ -140,11 +140,13 @@ fn checksum_parquetdb(parquetdb_dir: &Path, filter: &TableFilter) -> Result<Stri
     let schema = Schema::from_schema_sql(&schema_path)?;
 
     // Create tables from schema
+    // Replace REAL with DOUBLE to avoid 32-bit precision loss in DuckDB
     let schema_sql = std::fs::read_to_string(&schema_path)?;
     for stmt in schema_sql.split(';') {
         let stmt = stmt.trim();
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
-            conn.execute(stmt, [])
+            let stmt = stmt.replace(" REAL", " DOUBLE");
+            conn.execute(&stmt, [])
                 .with_context(|| format!("Failed to execute: {}", stmt))?;
         }
     }

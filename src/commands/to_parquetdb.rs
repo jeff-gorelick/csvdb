@@ -236,11 +236,13 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<Schema> {
     let schema = Schema::from_schema_sql(&schema_path)?;
 
     // Create tables and load CSV data
+    // Replace REAL with DOUBLE to avoid 32-bit precision loss in DuckDB
     let schema_sql = fs::read_to_string(&schema_path)?;
     for stmt in schema_sql.split(';') {
         let stmt = stmt.trim();
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
-            conn.execute(stmt, [])
+            let stmt = stmt.replace(" REAL", " DOUBLE");
+            conn.execute(&stmt, [])
                 .with_context(|| format!("Failed to execute: {}", stmt))?;
         }
     }
@@ -270,11 +272,13 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<Schema> {
     let schema = Schema::from_schema_sql(&schema_path)?;
 
     // Create tables from schema and load parquet data
+    // Replace REAL with DOUBLE to avoid 32-bit precision loss in DuckDB
     let schema_sql = fs::read_to_string(&schema_path)?;
     for stmt in schema_sql.split(';') {
         let stmt = stmt.trim();
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
-            conn.execute(stmt, [])
+            let stmt = stmt.replace(" REAL", " DOUBLE");
+            conn.execute(&stmt, [])
                 .with_context(|| format!("Failed to execute: {}", stmt))?;
         }
     }
