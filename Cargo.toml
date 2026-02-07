@@ -8,6 +8,7 @@ repository = "https://github.com/jeff-gorelick/csvdb"
 readme = "README.md"
 keywords = ["csv", "sqlite", "duckdb", "git", "database"]
 categories = ["command-line-utilities", "database"]
+exclude = ["CLAUDE.md", "tests/"]
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
