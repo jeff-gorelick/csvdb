@@ -375,3 +375,123 @@ class TestAdvancedRoundtrips:
         count = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
         conn.close()
         assert count == 10000
+
+
+class TestParquetdbRoundtrips:
+    """Roundtrip tests involving parquetdb format."""
+
+    def test_sqlite_to_parquetdb_to_sqlite_roundtrip(self, run_csvdb, temp_dir):
+        """SQLite -> parquetdb -> SQLite should preserve checksums."""
+        db_path = temp_dir / "rt_pq.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE data (id INTEGER PRIMARY KEY, name TEXT, value REAL)")
+        conn.executemany("INSERT INTO data VALUES (?, ?, ?)", [
+            (1, "Alice", 10.5),
+            (2, "Bob", 20.0),
+            (3, "Charlie", 30.75),
+        ])
+        conn.commit()
+        conn.close()
+
+        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+
+        run_csvdb("to-parquetdb", str(db_path))
+        parquetdb_dir = temp_dir / "rt_pq.parquetdb"
+
+        # parquetdb -> csvdb -> sqlite (since to-sqlite needs csvdb input)
+        run_csvdb("to-csvdb", "-o", str(temp_dir / "rt_pq_mid.csvdb"), str(parquetdb_dir))
+        run_csvdb("to-sqlite", "--force", str(temp_dir / "rt_pq_mid.csvdb"))
+
+        rebuilt_checksum = run_csvdb("checksum", str(temp_dir / "rt_pq_mid.sqlite")).stdout.strip()
+        assert original_checksum == rebuilt_checksum
+
+    def test_csvdb_to_parquetdb_to_csvdb_roundtrip(self, run_csvdb, temp_dir):
+        """csvdb -> parquetdb -> csvdb should preserve checksums."""
+        # Create a csvdb via sqlite first
+        db_path = temp_dir / "csv_pq.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, price REAL)")
+        conn.executemany("INSERT INTO items VALUES (?, ?, ?)", [
+            (1, "Widget", 9.99),
+            (2, "Gadget", 19.99),
+        ])
+        conn.commit()
+        conn.close()
+
+        run_csvdb("to-csvdb", str(db_path))
+        csvdb1 = temp_dir / "csv_pq.csvdb"
+        csvdb1_checksum = run_csvdb("checksum", str(csvdb1)).stdout.strip()
+
+        # csvdb -> parquetdb -> csvdb
+        run_csvdb("to-parquetdb", str(csvdb1))
+        parquetdb_dir = temp_dir / "csv_pq.parquetdb"
+        run_csvdb("to-csvdb", "-o", str(temp_dir / "csv_pq_rt.csvdb"), str(parquetdb_dir))
+
+        csvdb2_checksum = run_csvdb("checksum", str(temp_dir / "csv_pq_rt.csvdb")).stdout.strip()
+        assert csvdb1_checksum == csvdb2_checksum
+
+    def test_full_chain_with_parquetdb(self, run_csvdb, temp_dir):
+        """sqlite -> csvdb -> parquetdb -> sqlite, checksums should match."""
+        db_path = temp_dir / "chain.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT, total REAL)")
+        conn.executemany("INSERT INTO orders VALUES (?, ?, ?)", [
+            (1, "Alice", 150.00),
+            (2, "Bob", 75.50),
+            (3, "Charlie", 200.00),
+        ])
+        conn.commit()
+        conn.close()
+
+        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+
+        # sqlite -> csvdb
+        run_csvdb("to-csvdb", str(db_path))
+        csvdb_dir = temp_dir / "chain.csvdb"
+
+        # csvdb -> parquetdb
+        run_csvdb("to-parquetdb", str(csvdb_dir))
+        parquetdb_dir = temp_dir / "chain.parquetdb"
+        parquetdb_checksum = run_csvdb("checksum", str(parquetdb_dir)).stdout.strip()
+        assert original_checksum == parquetdb_checksum
+
+        # parquetdb -> csvdb -> sqlite
+        run_csvdb("to-csvdb", "-o", str(temp_dir / "chain_rt.csvdb"), str(parquetdb_dir))
+        run_csvdb("to-sqlite", "--force", str(temp_dir / "chain_rt.csvdb"))
+
+        final_checksum = run_csvdb("checksum", str(temp_dir / "chain_rt.sqlite")).stdout.strip()
+        assert original_checksum == final_checksum
+
+
+class TestRealDoublePrecision:
+    """Tests for REAL->DOUBLE precision preservation."""
+
+    def test_real_precision_through_duckdb(self, run_csvdb, temp_dir):
+        """REAL values should survive csvdb -> DuckDB -> csvdb without precision loss."""
+        db_path = temp_dir / "real_prec.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE data (id INTEGER PRIMARY KEY, value REAL)")
+        conn.executemany("INSERT INTO data VALUES (?, ?)", [
+            (1, 99.99),
+            (2, 0.1),
+            (3, 3.14159265358979),
+        ])
+        conn.commit()
+        conn.close()
+
+        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+
+        # sqlite -> csvdb -> duckdb -> csvdb
+        run_csvdb("to-csvdb", str(db_path))
+        csvdb1 = temp_dir / "real_prec.csvdb"
+        run_csvdb("to-duckdb", "--force", str(csvdb1))
+        duck_path = temp_dir / "real_prec.duckdb"
+        run_csvdb("to-csvdb", "-o", str(temp_dir / "real_prec_rt.csvdb"), str(duck_path))
+
+        # Verify CSV values match exactly
+        original_csv = (csvdb1 / "data.csv").read_text()
+        rebuilt_csv = (temp_dir / "real_prec_rt.csvdb" / "data.csv").read_text()
+        assert original_csv == rebuilt_csv
+
+        rebuilt_checksum = run_csvdb("checksum", str(temp_dir / "real_prec_rt.csvdb")).stdout.strip()
+        assert original_checksum == rebuilt_checksum
