@@ -12,8 +12,8 @@ This document is the normative specification for the csvdb on-disk format. It co
 mydb.csvdb/
   csvdb.toml       # required — format metadata
   schema.sql       # required — CREATE TABLE, CREATE INDEX, CREATE VIEW
-  customers.csv    # required — one CSV file per table
-  orders.csv
+  customers.csv    # one CSV file per table (or .csv.gz if compressed)
+  orders.csv.gz
 ```
 
 ### `.parquetdb` directory
@@ -38,10 +38,14 @@ TOML file recording the format version and the settings used to produce the expo
 |-------|------|----------|-------------|
 | `format_version` | string | Yes | Must be `"1"`. |
 | `created_by` | string | No | Tool and version that wrote this directory (e.g. `"csvdb 0.3.0"`). |
-| `order` | string | No | Row ordering mode: `"pk"` (default), `"all-columns"`, or `"add-synthetic-key"`. |
+| `order` | string | No | Row ordering mode: `"pk"` (default), `"all-columns"`, or `"add-synthetic-key"`. Omitted when `order_by` is set. |
 | `null_mode` | string | No | NULL representation in CSV: `"marker"` (default), `"empty"`, or `"literal"`. |
+| `natural_sort` | boolean | No | If `true`, string PKs are sorted naturally (e.g. `"item2"` before `"item10"`). Implies `order = "pk"`. |
+| `order_by` | string | No | Custom SQL ORDER BY clause (e.g. `"created_at DESC"`). When present, overrides `order`. |
+| `compressed` | boolean | No | If `true`, CSV files use gzip compression (`.csv.gz` extension). |
 | `tables` | array of strings | No | If present, only these tables were exported (include filter). |
 | `exclude` | array of strings | No | If present, these tables were excluded from export. |
+| `table_checksums` | table (string → string) | No | Per-table SHA-256 checksums used by `--incremental` to skip unchanged tables on re-export. |
 
 When `order` or `null_mode` are absent, consumers should assume the defaults (`"pk"` and `"marker"`).
 
@@ -52,6 +56,7 @@ format_version = "1"
 created_by = "csvdb 0.3.0"
 order = "pk"
 null_mode = "marker"
+compressed = true
 ```
 
 ## schema.sql
@@ -76,7 +81,7 @@ The file is parsed by executing each semicolon-delimited statement into an in-me
 
 ### Naming
 
-Each table gets one file named `<tablename>.csv`. The table name is taken directly from the schema — no escaping or case-folding is applied.
+Each table gets one file named `<tablename>.csv` (or `<tablename>.csv.gz` when compressed). The table name is taken directly from the schema — no escaping or case-folding is applied. Readers should check for `.csv` first, then `.csv.gz`.
 
 ### Dialect
 
@@ -110,6 +115,10 @@ Rows are sorted to guarantee that identical data always produces identical files
 
 Sort is **lexicographic on string values**, not numeric (`"10"` sorts before `"2"`). For composite primary keys, rows are sorted by the first PK column, then the second, etc. (element-wise lexicographic comparison).
 
+When `natural_sort` is `true`, string PK values are compared using natural sort order — numeric segments within strings are compared as numbers (e.g. `"item2"` < `"item10"`). This only affects `order = "pk"`.
+
+When `order_by` is set, it provides a raw SQL `ORDER BY` clause passed directly to the database engine, overriding the `order` field entirely.
+
 ## NULL Encoding
 
 Three modes control how SQL NULL values are represented in CSV:
@@ -121,6 +130,10 @@ Three modes control how SQL NULL values are represented in CSV:
 | `"literal"` | `NULL` (four characters) | `""` (empty quoted field) | No |
 
 On import, the `\N` marker in a field is converted to SQL NULL. All other field values are inserted as-is.
+
+## Compressed CSV Files
+
+When `compressed` is `true` in `csvdb.toml`, CSV files use gzip compression with the `.csv.gz` extension. The inner content follows the same CSV dialect described above. A directory may contain a mix of `.csv` and `.csv.gz` files; readers should accept both.
 
 ## Blob Encoding
 
@@ -202,7 +215,11 @@ Parquet files are produced by DuckDB's `COPY ... TO ... (FORMAT PARQUET)` with d
 
 The `init` command infers schemas from raw CSV files:
 
-- **Types inferred**: `INTEGER`, `REAL`, `TEXT` only
+- **Types inferred**: `INTEGER`, `REAL`, `BOOLEAN`, `DATE`, `TIMESTAMP`, `TEXT`
+  - **BOOLEAN**: `true`/`false`/`yes`/`no`/`t`/`f` (case-insensitive). `1`/`0` are treated as INTEGER, not BOOLEAN.
+  - **DATE**: `YYYY-MM-DD` format (exactly 10 characters)
+  - **TIMESTAMP**: `YYYY-MM-DD[T ]HH:MM:SS` format (19+ characters)
+  - Widening: BOOLEAN + INTEGER = INTEGER, BOOLEAN + REAL = REAL, DATE + TIMESTAMP = TIMESTAMP. All other mismatches widen to TEXT.
 - **PK detection**: Columns named `id` or `<table_name>_id` are candidates. Uniqueness is tracked up to **100,000 values**; after that, tracking stops and the column is used as PK if it was unique up to that point.
 - PK detection can be disabled with `--no-pk-detection`
 
