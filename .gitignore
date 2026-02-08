@@ -31,6 +31,10 @@ __pycache__/
 *.csvdb
 !test_data/**/*.csvdb
 !examples/**/*.csvdb
+!csvdb/
+
+# Generated C header
+csvdb-ffi/csvdb.h
 
 # Lock files (let each platform generate)
 uv.lock

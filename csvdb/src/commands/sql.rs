@@ -15,7 +15,21 @@ pub enum OutputFormat {
     Table,
 }
 
-pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()> {
+/// Structured result from a SQL query.
+pub struct QueryResult {
+    pub column_names: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub null_flags: Vec<Vec<bool>>,
+}
+
+/// Execute a read-only SQL query and return structured results.
+pub fn sql_query(path: &Path, query: &str) -> Result<QueryResult> {
+    let (result, _) = sql_query_internal(path, query)?;
+    Ok(result)
+}
+
+/// Internal: returns QueryResult + numeric column flags (for table formatting).
+fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool>)> {
     // Validate query is read-only
     let trimmed = query.trim();
     let upper = trimmed.to_uppercase();
@@ -25,15 +39,6 @@ pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()>
     }
 
     let input_format = InputFormat::from_path(path)?;
-
-    // Determine output format
-    let format = format.unwrap_or_else(|| {
-        if io::stdout().is_terminal() {
-            OutputFormat::Table
-        } else {
-            OutputFormat::Csv
-        }
-    });
 
     let conn = Connection::open_in_memory()
         .context("Failed to create in-memory DuckDB connection")?;
@@ -53,13 +58,15 @@ pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()>
     let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
     let column_count = column_names.len();
 
+    // Detect numeric columns from Arrow schema
+    let numeric_cols: Vec<bool> = schema.fields().iter().map(|f| is_numeric_type(f.data_type())).collect();
+
     // Collect all record batches
     let batches: Vec<arrow::record_batch::RecordBatch> = arrow.collect();
 
-    // Convert Arrow batches to Vec<Vec<Value>> for output
+    // Convert Arrow batches to Vec<Vec<String>> for output
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut null_flags: Vec<Vec<bool>> = Vec::new();
-    let mut numeric_cols = vec![false; column_count];
 
     for batch in &batches {
         for row_idx in 0..batch.num_rows() {
@@ -81,14 +88,24 @@ pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()>
         }
     }
 
-    // Detect numeric columns from Arrow schema
-    for (i, field) in schema.fields().iter().enumerate() {
-        numeric_cols[i] = is_numeric_type(field.data_type());
-    }
+    Ok((QueryResult { column_names, rows, null_flags }, numeric_cols))
+}
+
+pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()> {
+    let (result, numeric_cols) = sql_query_internal(path, query)?;
+
+    // Determine output format
+    let format = format.unwrap_or_else(|| {
+        if io::stdout().is_terminal() {
+            OutputFormat::Table
+        } else {
+            OutputFormat::Csv
+        }
+    });
 
     match format {
-        OutputFormat::Csv => print_csv(&column_names, &rows)?,
-        OutputFormat::Table => print_table(&column_names, &rows, &null_flags, &numeric_cols)?,
+        OutputFormat::Csv => print_csv(&result.column_names, &result.rows)?,
+        OutputFormat::Table => print_table(&result.column_names, &result.rows, &result.null_flags, &numeric_cols)?,
     }
 
     Ok(())

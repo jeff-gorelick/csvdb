@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "csvdb"
+version = "0.2.0"
+requires-python = ">=3.8"
+
+[dependency-groups]
+dev = ["pytest>=7.0", "maturin>=1,<2"]
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+
+[tool.maturin.environment]
+PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"

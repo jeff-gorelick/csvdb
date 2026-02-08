@@ -1,0 +1,16 @@
+[package]
+name = "csvdb-ffi"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "csvdb_ffi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+csvdb = { path = "../csvdb" }
+csv = "1.3"
+
+[dev-dependencies]
+tempfile = "3"
+rusqlite = { version = "0.32", features = ["bundled"] }

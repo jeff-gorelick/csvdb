@@ -16,6 +16,7 @@ def get_csvdb_binary():
     bin_name = f"csvdb{exe_suffix}"
 
     # Try release binary first, then debug
+    # In workspace layout, binaries are built at the workspace root target/
     release_bin = repo_root / "target" / "release" / bin_name
     debug_bin = repo_root / "target" / "debug" / bin_name
 
@@ -26,7 +27,7 @@ def get_csvdb_binary():
     else:
         # Build release binary
         subprocess.run(
-            ["cargo", "build", "--release"],
+            ["cargo", "build", "--release", "-p", "csvdb"],
             cwd=repo_root,
             check=True,
             capture_output=True
