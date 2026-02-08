@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
 use csv::ReaderBuilder;
+use flate2::read::GzDecoder;
+use std::collections::HashSet;
 use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::Path;
 
 use crate::core::Schema;
+use crate::core::csv::find_table_file;
 use crate::core::config::{CsvdbConfig, CURRENT_FORMAT_VERSION};
 
 /// Result of validating a .csvdb or .parquetdb directory.
@@ -61,23 +65,38 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
 
         // 2-4. Check each table's CSV file
         for (table_name, table_schema) in &schema.tables {
-            let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+            let csv_path = match find_table_file(csvdb_dir, table_name) {
+                Some(p) => p,
+                None => {
+                    let msg = format!("{}: missing CSV file", table_name);
+                    println!("  {}.csv .............. WARN: missing CSV file", table_name);
+                    warnings.push(msg);
+                    continue;
+                }
+            };
 
-            if !csv_path.exists() {
-                let msg = format!("{}: missing CSV file", table_name);
-                println!("  {}.csv .............. WARN: missing CSV file", table_name);
-                warnings.push(msg);
-                continue;
-            }
+            let display_name = csv_path.file_name().unwrap_or_default().to_string_lossy();
 
             // Try to read and validate
             match validate_csv(&csv_path, table_schema) {
-                Ok(row_count) => {
-                    println!("  {}.csv .............. OK ({} rows)", table_name, row_count);
+                Ok(csv_result) => {
+                    println!("  {} .............. OK ({} rows)", display_name, csv_result.row_count);
+                    if !csv_result.duplicate_pks.is_empty() {
+                        let count = csv_result.duplicate_pks.len();
+                        let examples: Vec<&str> = csv_result.duplicate_pks.iter().take(3).map(|s| s.as_str()).collect();
+                        let msg = format!(
+                            "{}: {} duplicate primary key(s) found (e.g. {})",
+                            display_name,
+                            count,
+                            examples.join("; ")
+                        );
+                        println!("  {} .............. WARN: {} duplicate PK(s)", display_name, count);
+                        warnings.push(msg);
+                    }
                 }
                 Err(e) => {
-                    let msg = format!("{}.csv: {}", table_name, e);
-                    println!("  {}.csv .............. WARN: {}", table_name, e);
+                    let msg = format!("{}: {}", display_name, e);
+                    println!("  {} .............. WARN: {}", display_name, e);
                     warnings.push(msg);
                 }
             }
@@ -140,17 +159,32 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
     })
 }
 
+/// Result of validating a single CSV file.
+struct CsvValidateResult {
+    row_count: usize,
+    duplicate_pks: Vec<String>,
+}
+
 /// Validate a single CSV file against its schema.
+/// Supports both .csv and .csv.gz files.
 fn validate_csv(
     csv_path: &Path,
     schema: &crate::core::TableSchema,
-) -> Result<usize> {
+) -> Result<CsvValidateResult> {
     let file = File::open(csv_path)
         .with_context(|| format!("Failed to open {}", csv_path.display()))?;
 
+    let is_gz = csv_path.extension().map(|e| e == "gz").unwrap_or(false);
+
+    let reader_box: Box<dyn Read> = if is_gz {
+        Box::new(GzDecoder::new(BufReader::new(file)))
+    } else {
+        Box::new(file)
+    };
+
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
-        .from_reader(file);
+        .from_reader(reader_box);
 
     // Check header matches schema columns
     let headers = reader.headers()?.clone();
@@ -164,6 +198,16 @@ fn validate_csv(
             schema_names.join(", ")
         );
     }
+
+    // Determine PK column indices for duplicate detection
+    let pk_indices: Vec<usize> = schema.pk_columns
+        .iter()
+        .filter_map(|pk| header_names.iter().position(|h| h == pk))
+        .collect();
+    let check_pks = !pk_indices.is_empty();
+
+    let mut seen_pks: HashSet<Vec<String>> = HashSet::new();
+    let mut duplicate_pks: Vec<String> = Vec::new();
 
     // Check all rows parse and have correct column count
     let expected_cols = schema.columns.len();
@@ -179,10 +223,22 @@ fn validate_csv(
                 expected_cols
             );
         }
+
+        // Check for duplicate PKs
+        if check_pks {
+            let pk_tuple: Vec<String> = pk_indices
+                .iter()
+                .map(|&idx| record.get(idx).unwrap_or("").to_string())
+                .collect();
+            if !seen_pks.insert(pk_tuple.clone()) {
+                duplicate_pks.push(pk_tuple.join(", "));
+            }
+        }
+
         row_count += 1;
     }
 
-    Ok(row_count)
+    Ok(CsvValidateResult { row_count, duplicate_pks })
 }
 
 fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
@@ -441,6 +497,64 @@ mod tests {
         let result = validate(&csvdb_dir)?;
         assert!(result.errors.is_empty());
         assert!(!result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_duplicate_pk_warning() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("dup.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
+        )?;
+        // Duplicate PK: id=1 appears twice
+        fs::write(csvdb_dir.join("t.csv"), "id,name\n1,Alice\n1,Bob\n2,Charlie\n")?;
+
+        let result = validate(&csvdb_dir)?;
+        assert!(result.errors.is_empty());
+        assert!(!result.warnings.is_empty());
+        assert!(result.warnings.iter().any(|w| w.contains("duplicate primary key")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_no_pk_skips_duplicate_check() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("nopk.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        // Table without PK
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"a\" TEXT,\n    \"b\" TEXT\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "a,b\nfoo,bar\nfoo,bar\n")?;
+
+        let result = validate(&csvdb_dir)?;
+        assert!(result.errors.is_empty());
+        // No duplicate PK warnings because there's no PK
+        assert!(result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_unique_pks_clean() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("clean.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id,name\n1,Alice\n2,Bob\n3,Charlie\n")?;
+
+        let result = validate(&csvdb_dir)?;
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
         Ok(())
     }
 

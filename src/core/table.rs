@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use duckdb::Connection as DuckDbConnection;
 use rusqlite::Connection;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -173,6 +174,52 @@ impl Table {
         Ok(TableReadResult { table, warnings })
     }
 
+    /// Read a table from SQLite database with a custom ORDER BY clause.
+    /// Rows are returned in the SQL-specified order; pk_columns is empty
+    /// so that write_table_csv_sorted preserves the custom ordering.
+    pub fn from_sqlite_custom_order(
+        conn: &Connection,
+        schema: &TableSchema,
+        order_by: &str,
+        null_mode: NullMode,
+    ) -> Result<TableReadResult> {
+        let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
+        let select_cols = columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+
+        let query = format!(
+            "SELECT {} FROM \"{}\" ORDER BY {}",
+            select_cols,
+            schema.name,
+            order_by
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+
+        let rows: Vec<Row> = stmt
+            .query_map([], |row| {
+                let values: Vec<String> = (0..columns.len())
+                    .map(|i| {
+                        let value: rusqlite::types::Value = row.get(i)?;
+                        Ok(value_to_string(&value, null_mode))
+                    })
+                    .collect::<Result<_, rusqlite::Error>>()?;
+
+                // Empty pk_values so CSV writer won't re-sort
+                Ok(Row { pk_values: vec![], values })
+            })?
+            .collect::<Result<_, _>>()
+            .context("Failed to read rows")?;
+
+        let table = Table {
+            name: schema.name.clone(),
+            columns,
+            pk_columns: vec![],
+            rows,
+        };
+
+        Ok(TableReadResult { table, warnings: vec![] })
+    }
+
     /// Read a table from DuckDB database with configurable ordering.
     pub fn from_duckdb_with_order(
         conn: &DuckDbConnection,
@@ -288,6 +335,52 @@ impl Table {
         Ok(TableReadResult { table, warnings })
     }
 
+    /// Read a table from DuckDB database with a custom ORDER BY clause.
+    /// Rows are returned in the SQL-specified order; pk_columns is empty
+    /// so that write_table_csv_sorted preserves the custom ordering.
+    pub fn from_duckdb_custom_order(
+        conn: &DuckDbConnection,
+        schema: &TableSchema,
+        order_by: &str,
+        null_mode: NullMode,
+    ) -> Result<TableReadResult> {
+        let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
+        let select_cols = columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+
+        let query = format!(
+            "SELECT {} FROM \"{}\" ORDER BY {}",
+            select_cols,
+            schema.name,
+            order_by
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+
+        let rows: Vec<Row> = stmt
+            .query_map([], |row| {
+                let values: Vec<String> = (0..columns.len())
+                    .map(|i| {
+                        let value: duckdb::types::Value = row.get(i)?;
+                        Ok(duckdb_value_to_string(&value, null_mode))
+                    })
+                    .collect::<Result<_, duckdb::Error>>()?;
+
+                // Empty pk_values so CSV writer won't re-sort
+                Ok(Row { pk_values: vec![], values })
+            })?
+            .collect::<Result<_, _>>()
+            .context("Failed to read rows")?;
+
+        let table = Table {
+            name: schema.name.clone(),
+            columns,
+            pk_columns: vec![],
+            rows,
+        };
+
+        Ok(TableReadResult { table, warnings: vec![] })
+    }
+
     /// Build a map from primary key to row for efficient lookups.
     pub fn rows_by_pk(&self) -> HashMap<String, &Row> {
         self.rows.iter().map(|r| (r.pk_key(), r)).collect()
@@ -396,6 +489,74 @@ impl Table {
         }
 
         Ok(())
+    }
+}
+
+/// Compare two strings using natural sort order.
+/// Splits on digit/non-digit boundaries and compares numbers numerically.
+pub fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let mut a_iter = NaturalChunks::new(a);
+    let mut b_iter = NaturalChunks::new(b);
+
+    loop {
+        match (a_iter.next(), b_iter.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(a_chunk), Some(b_chunk)) => {
+                let ord = match (a_chunk, b_chunk) {
+                    (Chunk::Numeric(an), Chunk::Numeric(bn)) => an.cmp(&bn),
+                    (Chunk::Text(at), Chunk::Text(bt)) => at.cmp(bt),
+                    (Chunk::Numeric(_), Chunk::Text(_)) => Ordering::Less,
+                    (Chunk::Text(_), Chunk::Numeric(_)) => Ordering::Greater,
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
+}
+
+enum Chunk<'a> {
+    Numeric(u64),
+    Text(&'a str),
+}
+
+struct NaturalChunks<'a> {
+    s: &'a str,
+    pos: usize,
+}
+
+impl<'a> NaturalChunks<'a> {
+    fn new(s: &'a str) -> Self {
+        Self { s, pos: 0 }
+    }
+}
+
+impl<'a> Iterator for NaturalChunks<'a> {
+    type Item = Chunk<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.s.len() {
+            return None;
+        }
+        let bytes = self.s.as_bytes();
+        let start = self.pos;
+        if bytes[start].is_ascii_digit() {
+            // Consume all digits
+            while self.pos < bytes.len() && bytes[self.pos].is_ascii_digit() {
+                self.pos += 1;
+            }
+            let num_str = &self.s[start..self.pos];
+            Some(Chunk::Numeric(num_str.parse::<u64>().unwrap_or(0)))
+        } else {
+            // Consume all non-digits
+            while self.pos < bytes.len() && !bytes[self.pos].is_ascii_digit() {
+                self.pos += 1;
+            }
+            Some(Chunk::Text(&self.s[start..self.pos]))
+        }
     }
 }
 
@@ -737,5 +898,47 @@ mod tests {
         assert_eq!(rows[1].2, Some(42));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_natural_cmp_basic() {
+        assert_eq!(natural_cmp("item2", "item10"), Ordering::Less);
+        assert_eq!(natural_cmp("item10", "item2"), Ordering::Greater);
+        assert_eq!(natural_cmp("item10", "item10"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_natural_cmp_pure_numbers() {
+        assert_eq!(natural_cmp("2", "10"), Ordering::Less);
+        assert_eq!(natural_cmp("10", "2"), Ordering::Greater);
+        assert_eq!(natural_cmp("100", "100"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_natural_cmp_pure_text() {
+        assert_eq!(natural_cmp("abc", "def"), Ordering::Less);
+        assert_eq!(natural_cmp("def", "abc"), Ordering::Greater);
+        assert_eq!(natural_cmp("abc", "abc"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_natural_cmp_mixed() {
+        assert_eq!(natural_cmp("file1", "file2"), Ordering::Less);
+        assert_eq!(natural_cmp("file9", "file10"), Ordering::Less);
+        assert_eq!(natural_cmp("file10", "file9"), Ordering::Greater);
+        assert_eq!(natural_cmp("a1b2", "a1b10"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_natural_cmp_empty_strings() {
+        assert_eq!(natural_cmp("", ""), Ordering::Equal);
+        assert_eq!(natural_cmp("", "a"), Ordering::Less);
+        assert_eq!(natural_cmp("a", ""), Ordering::Greater);
+    }
+
+    #[test]
+    fn test_natural_cmp_different_prefixes() {
+        assert_eq!(natural_cmp("abc10", "abd2"), Ordering::Less);
+        assert_eq!(natural_cmp("b1", "a2"), Ordering::Greater);
     }
 }

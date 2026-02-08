@@ -5,6 +5,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
+use crate::core::csv::find_table_file;
 use crate::core::{InputFormat, Schema};
 use crate::{NullMode, OrderMode, TableFilter};
 
@@ -22,6 +23,9 @@ pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result
                 input_path,
                 OrderMode::Pk,
                 NullMode::Marker,
+                false,
+                None,
+                false,
                 Some(&temp_csvdb),
                 true,
                 filter,
@@ -93,8 +97,7 @@ pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result
             continue;
         }
         pb.set_message(table_name.clone());
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        if csv_path.exists() {
+        if let Some(csv_path) = find_table_file(&csvdb_dir, table_name) {
             // Get absolute path and convert to forward slashes for DuckDB
             let abs_path = csv_path.canonicalize()
                 .with_context(|| format!("Failed to get absolute path: {}", csv_path.display()))?;
@@ -103,6 +106,7 @@ pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result
             // Remove Windows UNC prefix if present (\\?\)
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
+            // DuckDB natively reads .csv.gz files
             let copy_sql = format!(
                 "COPY \"{}\" FROM '{}' (HEADER, NULL '\\N')",
                 table_name, path_str
@@ -142,7 +146,7 @@ mod tests {
         }
 
         // Convert to CSV
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Convert to DuckDB
         let duckdb_path = to_duckdb(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
@@ -186,7 +190,7 @@ mod tests {
         }
 
         // SQLite -> CSV
-        let csvdb = to_csv(&original_db, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&original_db, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // CSV -> DuckDB
         let duckdb_path = to_duckdb(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
@@ -281,7 +285,7 @@ mod tests {
             conn.execute("INSERT INTO t VALUES (2, 'Bob', 42)", [])?;
         }
 
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
         let duckdb_path = to_duckdb(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
 
         let conn = duckdb::Connection::open(&duckdb_path)?;

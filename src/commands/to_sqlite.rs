@@ -6,7 +6,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::core::csv::read_table_csv;
+use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::core::{InputFormat, Schema};
 use crate::{NullMode, OrderMode, TableFilter};
 
@@ -24,6 +24,9 @@ pub fn to_sqlite(input_path: &Path, force: bool, filter: &TableFilter) -> Result
                 input_path,
                 OrderMode::Pk,
                 NullMode::Marker,
+                false,
+                None,
+                false,
                 Some(&temp_csvdb),
                 true,
                 filter,
@@ -62,8 +65,14 @@ pub fn to_sqlite(input_path: &Path, force: bool, filter: &TableFilter) -> Result
         fs::remove_file(&db_path)?;
     }
 
-    // Try to use sqlite3 CLI for fast import, fall back to rusqlite if unavailable
-    if sqlite3_available() {
+    // Check if any table files are compressed (.csv.gz)
+    let has_compressed = schema.tables.keys().any(|t| {
+        csvdb_dir.join(format!("{}.csv.gz", t)).exists()
+    });
+
+    // Try to use sqlite3 CLI for fast import, fall back to rusqlite if unavailable.
+    // sqlite3 CLI cannot read .csv.gz files, so use rusqlite for compressed data.
+    if sqlite3_available() && !has_compressed {
         to_sqlite_via_cli(&csvdb_dir, &db_path, &schema_path, &schema, filter)
     } else {
         to_sqlite_via_rusqlite(&csvdb_dir, &db_path, &schema_path, &schema, filter)
@@ -109,8 +118,7 @@ fn to_sqlite_via_cli(
         if !filter.matches(table_name) {
             continue;
         }
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        if csv_path.exists() {
+        if let Some(csv_path) = find_table_file(csvdb_dir, table_name) {
             let abs_csv_path = csv_path.canonicalize()
                 .with_context(|| format!("Failed to get absolute path: {}", csv_path.display()))?;
             // .import with --skip 1 to skip header row
@@ -202,9 +210,8 @@ fn to_sqlite_via_rusqlite(
             continue;
         }
         pb.set_message(table_name.clone());
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        if csv_path.exists() {
-            let table = read_table_csv(&csv_path, table_schema)?;
+        if let Some(csv_path) = find_table_file(csvdb_dir, table_name) {
+            let table = read_table_csv_auto(&csv_path, table_schema)?;
             table.write_to_sqlite(&conn)?;
         }
         pb.inc(1);
@@ -239,7 +246,7 @@ mod tests {
         }
 
         // Convert to CSV
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Remove original database
         fs::remove_file(&db_path)?;

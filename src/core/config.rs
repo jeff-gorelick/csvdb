@@ -1,7 +1,11 @@
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+
+use crate::{OrderMode, NullMode};
 
 pub const CURRENT_FORMAT_VERSION: &str = "1";
 
@@ -21,9 +25,17 @@ pub struct CsvdbConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub null_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub natural_sort: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compressed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tables: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_checksums: Option<BTreeMap<String, String>>,
 }
 
 impl CsvdbConfig {
@@ -38,6 +50,16 @@ impl CsvdbConfig {
         let config: CsvdbConfig = toml::from_str(&content)
             .with_context(|| format!("Failed to parse {}", config_path.display()))?;
         Ok(config)
+    }
+
+    /// Parse the order field as an OrderMode.
+    pub fn order_mode(&self) -> Option<OrderMode> {
+        self.order.as_ref().and_then(|s| OrderMode::from_str(s, true).ok())
+    }
+
+    /// Parse the null_mode field as a NullMode.
+    pub fn null_mode(&self) -> Option<NullMode> {
+        self.null_mode.as_ref().and_then(|s| NullMode::from_str(s, true).ok())
     }
 
     /// Write config to a csvdb.toml file.
@@ -66,6 +88,30 @@ mod tests {
     }
 
     #[test]
+    fn test_config_order_mode() -> Result<()> {
+        let config = CsvdbConfig {
+            order: Some("pk".to_string()),
+            null_mode: Some("empty".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(config.order_mode(), Some(OrderMode::Pk));
+        assert_eq!(config.null_mode(), Some(NullMode::Empty));
+
+        let config2 = CsvdbConfig {
+            order: Some("all-columns".to_string()),
+            null_mode: Some("marker".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(config2.order_mode(), Some(OrderMode::AllColumns));
+        assert_eq!(config2.null_mode(), Some(NullMode::Marker));
+
+        let empty = CsvdbConfig::default();
+        assert_eq!(empty.order_mode(), None);
+        assert_eq!(empty.null_mode(), None);
+        Ok(())
+    }
+
+    #[test]
     fn test_roundtrip_config() -> Result<()> {
         let dir = tempdir()?;
         let config = CsvdbConfig {
@@ -73,8 +119,12 @@ mod tests {
             created_by: Some(created_by_string()),
             order: Some("pk".to_string()),
             null_mode: Some("marker".to_string()),
+            natural_sort: None,
+            order_by: None,
+            compressed: None,
             tables: None,
             exclude: None,
+            table_checksums: None,
         };
         config.write(dir.path())?;
 

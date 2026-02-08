@@ -3,6 +3,7 @@ pub mod commands;
 
 pub use commands::{init, to_csv, to_duckdb, to_sqlite};
 pub use core::config::CsvdbConfig;
+pub use core::input::InputFormat;
 
 use clap::ValueEnum;
 
@@ -24,10 +25,10 @@ pub enum NullMode {
     /// Use \N to represent NULL (PostgreSQL convention). Default.
     /// Lossless: empty string "" is preserved as empty string.
     #[default]
-    #[value(name = "marker")]
+    #[value(name = "marker", alias = "postgres", alias = "mysql")]
     Marker,
     /// Use empty string for NULL. LOSSY: cannot distinguish NULL from empty string.
-    #[value(name = "empty")]
+    #[value(name = "empty", alias = "excel")]
     Empty,
     /// Use literal string "NULL" for NULL. LOSSY: cannot distinguish NULL from the string "NULL".
     #[value(name = "literal")]
@@ -108,6 +109,20 @@ mod tests {
         assert!(NullMode::Marker.is_null("\\N"));
         assert!(NullMode::Empty.is_null(""));
         assert!(NullMode::Literal.is_null("NULL"));
+    }
+
+    #[test]
+    fn test_null_mode_alias_parsing() {
+        use clap::ValueEnum;
+        // "postgres" and "mysql" should resolve to Marker
+        assert_eq!(NullMode::from_str("postgres", true).unwrap(), NullMode::Marker);
+        assert_eq!(NullMode::from_str("mysql", true).unwrap(), NullMode::Marker);
+        // "excel" should resolve to Empty
+        assert_eq!(NullMode::from_str("excel", true).unwrap(), NullMode::Empty);
+        // canonical names still work
+        assert_eq!(NullMode::from_str("marker", true).unwrap(), NullMode::Marker);
+        assert_eq!(NullMode::from_str("empty", true).unwrap(), NullMode::Empty);
+        assert_eq!(NullMode::from_str("literal", true).unwrap(), NullMode::Literal);
     }
 
     #[test]

@@ -62,6 +62,60 @@ class TestValidate:
         assert "ERROR" in result.stdout or result.returncode != 0
 
 
+class TestValidateDuplicatePK:
+    def test_validate_duplicate_pk_warns(self, run_csvdb, temp_dir):
+        """Duplicate PK values in CSV should produce a warning."""
+        csvdb_dir = temp_dir / "dupkey.csvdb"
+        csvdb_dir.mkdir()
+
+        (csvdb_dir / "schema.sql").write_text(
+            'CREATE TABLE "t" (\n'
+            '    "id" INTEGER PRIMARY KEY,\n'
+            '    "name" TEXT\n'
+            ');\n'
+        )
+        # id=1 appears twice
+        (csvdb_dir / "t.csv").write_text("id,name\n1,Alice\n1,Bob\n2,Charlie\n")
+
+        result = run_csvdb("validate", str(csvdb_dir))
+        assert result.returncode == 0  # warnings don't cause failure
+        assert "duplicate" in result.stdout.lower()
+
+    def test_validate_unique_pks_no_warning(self, run_csvdb, temp_dir):
+        """Unique PKs should not produce duplicate warnings."""
+        csvdb_dir = temp_dir / "unique.csvdb"
+        csvdb_dir.mkdir()
+
+        (csvdb_dir / "schema.sql").write_text(
+            'CREATE TABLE "t" (\n'
+            '    "id" INTEGER PRIMARY KEY,\n'
+            '    "name" TEXT\n'
+            ');\n'
+        )
+        (csvdb_dir / "t.csv").write_text("id,name\n1,Alice\n2,Bob\n3,Charlie\n")
+
+        result = run_csvdb("validate", str(csvdb_dir))
+        assert result.returncode == 0
+        assert "0 warnings" in result.stdout
+
+    def test_validate_no_pk_skips_check(self, run_csvdb, temp_dir):
+        """Tables without PK skip duplicate check."""
+        csvdb_dir = temp_dir / "nopk.csvdb"
+        csvdb_dir.mkdir()
+
+        (csvdb_dir / "schema.sql").write_text(
+            'CREATE TABLE "t" (\n'
+            '    "a" TEXT,\n'
+            '    "b" TEXT\n'
+            ');\n'
+        )
+        (csvdb_dir / "t.csv").write_text("a,b\nfoo,bar\nfoo,bar\n")
+
+        result = run_csvdb("validate", str(csvdb_dir))
+        assert result.returncode == 0
+        assert "duplicate" not in result.stdout.lower()
+
+
 class TestValidateEdgeCases:
     def test_validate_empty_table(self, run_csvdb, temp_dir):
         """Schema with table, CSV has header only (0 rows) -> OK."""

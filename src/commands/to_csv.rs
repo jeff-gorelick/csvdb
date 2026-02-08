@@ -2,24 +2,41 @@ use anyhow::{Context, Result, bail};
 use duckdb::Connection as DuckDbConnection;
 use indicatif::{ProgressBar, ProgressStyle};
 use rusqlite::Connection as SqliteConnection;
+use sha2::{Sha256, Digest};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use crate::core::config::{CURRENT_FORMAT_VERSION, created_by_string};
-use crate::core::csv::write_table_csv;
+use crate::core::config::{CURRENT_FORMAT_VERSION, created_by_string, CsvdbConfig};
+use crate::core::csv::{find_table_file, write_table_csv_gz, write_table_csv_sorted};
 use crate::core::table::Table;
 use crate::core::{InputFormat, Schema};
-use crate::{CsvdbConfig, NullMode, OrderMode, TableFilter};
+use crate::{NullMode, OrderMode, TableFilter};
 
-/// Convert any supported format to a .csvdb directory.
-///
-/// If `output_dir` is None, creates a .csvdb directory next to the input file.
-pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, output_dir: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
-    let input_format = InputFormat::from_path(input_path)?;
+/// Compute a SHA256 checksum of a Table's column names and row data.
+fn table_checksum(table: &Table) -> String {
+    let mut hasher = Sha256::new();
+    // Hash column names
+    for col in &table.columns {
+        hasher.update(col.as_bytes());
+        hasher.update(b"\x00");
+    }
+    // Hash row data (sorted by pk_values for determinism)
+    let mut sorted_rows = table.rows.clone();
+    sorted_rows.sort_by(|a, b| a.pk_values.cmp(&b.pk_values));
+    for row in &sorted_rows {
+        for val in &row.values {
+            hasher.update(val.as_bytes());
+            hasher.update(b"\x00");
+        }
+        hasher.update(b"\x01");
+    }
+    format!("{:x}", hasher.finalize())
+}
 
-    // Determine output directory
-    let csvdb_dir = match output_dir {
+fn resolve_output_dir(input_path: &Path, output_dir: Option<&Path>) -> PathBuf {
+    match output_dir {
         Some(dir) => dir.to_path_buf(),
         None => {
             let stem = input_path
@@ -35,7 +52,48 @@ pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, out
                 .unwrap_or(Path::new("."))
                 .join(format!("{}.csvdb", stem))
         }
+    }
+}
+
+fn build_config(
+    order_mode: OrderMode,
+    null_mode: NullMode,
+    natural_sort: bool,
+    order_by: Option<&str>,
+    compress: bool,
+    filter: &TableFilter,
+    table_checksums: Option<BTreeMap<String, String>>,
+) -> CsvdbConfig {
+    let order_str = match order_mode {
+        OrderMode::Pk => "pk",
+        OrderMode::AllColumns => "all-columns",
+        OrderMode::AddSyntheticKey => "add-synthetic-key",
     };
+    let null_str = match null_mode {
+        NullMode::Marker => "marker",
+        NullMode::Empty => "empty",
+        NullMode::Literal => "literal",
+    };
+    CsvdbConfig {
+        format_version: Some(CURRENT_FORMAT_VERSION.to_string()),
+        created_by: Some(created_by_string()),
+        order: if order_by.is_none() { Some(order_str.to_string()) } else { None },
+        null_mode: Some(null_str.to_string()),
+        natural_sort: if natural_sort { Some(true) } else { None },
+        order_by: order_by.map(|s| s.to_string()),
+        compressed: if compress { Some(true) } else { None },
+        tables: if filter.tables.is_empty() { None } else { Some(filter.tables.clone()) },
+        exclude: if filter.exclude.is_empty() { None } else { Some(filter.exclude.clone()) },
+        table_checksums,
+    }
+}
+
+/// Convert any supported format to a .csvdb directory.
+///
+/// If `output_dir` is None, creates a .csvdb directory next to the input file.
+pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, output_dir: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+    let input_format = InputFormat::from_path(input_path)?;
+    let csvdb_dir = resolve_output_dir(input_path, output_dir);
 
     // Check for existing output
     if csvdb_dir.exists() {
@@ -50,35 +108,165 @@ pub fn to_csv(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, out
     fs::create_dir_all(&csvdb_dir)?;
 
     match input_format {
-        InputFormat::Sqlite => export_sqlite(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
-        InputFormat::DuckDb => export_duckdb(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
-        InputFormat::Parquetdb => export_parquetdb(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
-        InputFormat::Parquet => export_single_parquet(input_path, &csvdb_dir, order_mode, null_mode, filter)?,
+        InputFormat::Sqlite => export_sqlite(input_path, &csvdb_dir, order_mode, null_mode, natural_sort, order_by, compress, filter)?,
+        InputFormat::DuckDb => export_duckdb(input_path, &csvdb_dir, order_mode, null_mode, natural_sort, order_by, compress, filter)?,
+        InputFormat::Parquetdb => export_parquetdb(input_path, &csvdb_dir, order_mode, null_mode, natural_sort, order_by, compress, filter)?,
+        InputFormat::Parquet => export_single_parquet(input_path, &csvdb_dir, order_mode, null_mode, natural_sort, order_by, compress, filter)?,
         InputFormat::Csvdb => bail!("Input is already a csvdb directory"),
     }
 
-    // Write csvdb.toml with effective settings
-    let order_str = match order_mode {
-        OrderMode::Pk => "pk",
-        OrderMode::AllColumns => "all-columns",
-        OrderMode::AddSyntheticKey => "add-synthetic-key",
-    };
-    let null_str = match null_mode {
-        NullMode::Marker => "marker",
-        NullMode::Empty => "empty",
-        NullMode::Literal => "literal",
-    };
-    let config = CsvdbConfig {
-        format_version: Some(CURRENT_FORMAT_VERSION.to_string()),
-        created_by: Some(created_by_string()),
-        order: Some(order_str.to_string()),
-        null_mode: Some(null_str.to_string()),
-        tables: if filter.tables.is_empty() { None } else { Some(filter.tables.clone()) },
-        exclude: if filter.exclude.is_empty() { None } else { Some(filter.exclude.clone()) },
-    };
+    let config = build_config(order_mode, null_mode, natural_sort, order_by, compress, filter, None);
     config.write(&csvdb_dir)?;
 
     Ok(csvdb_dir)
+}
+
+/// Incremental export: only re-export tables whose data has changed.
+pub fn to_csv_incremental(input_path: &Path, order_mode: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, output_dir: Option<&Path>, filter: &TableFilter) -> Result<(PathBuf, IncrementalSummary)> {
+    let input_format = InputFormat::from_path(input_path)?;
+    let csvdb_dir = resolve_output_dir(input_path, output_dir);
+
+    // Load existing checksums if directory exists
+    let old_checksums = if csvdb_dir.exists() {
+        CsvdbConfig::load(&csvdb_dir)
+            .ok()
+            .and_then(|c| c.table_checksums)
+            .unwrap_or_default()
+    } else {
+        BTreeMap::new()
+    };
+
+    // Ensure output directory exists
+    fs::create_dir_all(&csvdb_dir)?;
+
+    // We need to export to a temp location first to compute checksums,
+    // then copy only changed files. Or we can compute checksums from the
+    // source data directly.
+    //
+    // Strategy: read all tables from source, compute checksums, compare
+    // with old checksums, and only write changed tables.
+
+    let mut new_checksums = BTreeMap::new();
+    let mut summary = IncrementalSummary::default();
+
+    match input_format {
+        InputFormat::Sqlite => {
+            let conn = SqliteConnection::open(input_path)
+                .with_context(|| format!("Failed to open SQLite database: {}", input_path.display()))?;
+            let schema = Schema::from_sqlite_with_order(&conn, order_mode)?;
+            let schema_path = csvdb_dir.join("schema.sql");
+            schema.write_schema_sql(&schema_path)?;
+
+            let pb = make_progress_bar(schema.tables.len() as u64);
+            for (table_name, table_schema) in &schema.tables {
+                if !filter.matches(table_name) {
+                    pb.inc(1);
+                    continue;
+                }
+                pb.set_message(table_name.clone());
+
+                let result = if let Some(custom_order) = order_by {
+                    Table::from_sqlite_custom_order(&conn, table_schema, custom_order, null_mode)?
+                } else {
+                    Table::from_sqlite_with_order(&conn, table_schema, order_mode, null_mode)?
+                };
+                for warning in &result.warnings {
+                    eprintln!("Warning: {}", warning);
+                }
+
+                let cksum = table_checksum(&result.table);
+                let changed = old_checksums.get(table_name).map(|old| old != &cksum).unwrap_or(true);
+
+                if changed {
+                    write_table(&result.table, &csvdb_dir, table_name, natural_sort, compress)?;
+                    if old_checksums.contains_key(table_name) {
+                        summary.updated.push(table_name.clone());
+                    } else {
+                        summary.added.push(table_name.clone());
+                    }
+                } else {
+                    summary.unchanged.push(table_name.clone());
+                }
+
+                new_checksums.insert(table_name.clone(), cksum);
+                pb.inc(1);
+            }
+            pb.finish_and_clear();
+        }
+        InputFormat::DuckDb => {
+            let conn = DuckDbConnection::open(input_path)
+                .with_context(|| format!("Failed to open DuckDB database: {}", input_path.display()))?;
+            let schema = Schema::from_duckdb_with_order(&conn, order_mode)?;
+            let schema_path = csvdb_dir.join("schema.sql");
+            schema.write_schema_sql(&schema_path)?;
+
+            let pb = make_progress_bar(schema.tables.len() as u64);
+            for (table_name, table_schema) in &schema.tables {
+                if !filter.matches(table_name) {
+                    pb.inc(1);
+                    continue;
+                }
+                pb.set_message(table_name.clone());
+
+                let result = if let Some(custom_order) = order_by {
+                    Table::from_duckdb_custom_order(&conn, table_schema, custom_order, null_mode)?
+                } else {
+                    Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?
+                };
+                for warning in &result.warnings {
+                    eprintln!("Warning: {}", warning);
+                }
+
+                let cksum = table_checksum(&result.table);
+                let changed = old_checksums.get(table_name).map(|old| old != &cksum).unwrap_or(true);
+
+                if changed {
+                    write_table(&result.table, &csvdb_dir, table_name, natural_sort, compress)?;
+                    if old_checksums.contains_key(table_name) {
+                        summary.updated.push(table_name.clone());
+                    } else {
+                        summary.added.push(table_name.clone());
+                    }
+                } else {
+                    summary.unchanged.push(table_name.clone());
+                }
+
+                new_checksums.insert(table_name.clone(), cksum);
+                pb.inc(1);
+            }
+            pb.finish_and_clear();
+        }
+        _ => bail!("--incremental only supports SQLite and DuckDB sources"),
+    }
+
+    // Remove CSVs for tables that no longer exist in the source
+    for old_table in old_checksums.keys() {
+        if !new_checksums.contains_key(old_table) {
+            // Remove old file (.csv or .csv.gz)
+            if let Some(old_path) = find_table_file(&csvdb_dir, old_table) {
+                fs::remove_file(&old_path)?;
+            }
+            summary.removed.push(old_table.clone());
+        }
+    }
+
+    // Write config with new checksums
+    let config = build_config(
+        order_mode, null_mode, natural_sort, order_by, compress, filter,
+        Some(new_checksums),
+    );
+    config.write(&csvdb_dir)?;
+
+    Ok((csvdb_dir, summary))
+}
+
+/// Summary of what changed during an incremental export.
+#[derive(Default)]
+pub struct IncrementalSummary {
+    pub unchanged: Vec<String>,
+    pub updated: Vec<String>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
 }
 
 fn make_progress_bar(len: u64) -> ProgressBar {
@@ -95,7 +283,17 @@ fn make_progress_bar(len: u64) -> ProgressBar {
     }
 }
 
-fn export_sqlite(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, filter: &TableFilter) -> Result<()> {
+fn write_table(table: &Table, csvdb_dir: &Path, table_name: &str, natural_sort: bool, compress: bool) -> Result<()> {
+    if compress {
+        let gz_path = csvdb_dir.join(format!("{}.csv.gz", table_name));
+        write_table_csv_gz(table, &gz_path, natural_sort)
+    } else {
+        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+        write_table_csv_sorted(table, &csv_path, natural_sort)
+    }
+}
+
+fn export_sqlite(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, filter: &TableFilter) -> Result<()> {
     let conn = SqliteConnection::open(db_path)
         .with_context(|| format!("Failed to open SQLite database: {}", db_path.display()))?;
 
@@ -114,14 +312,17 @@ fn export_sqlite(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
         }
 
         pb.set_message(table_name.clone());
-        let result = Table::from_sqlite_with_order(&conn, table_schema, order_mode, null_mode)?;
+        let result = if let Some(custom_order) = order_by {
+            Table::from_sqlite_custom_order(&conn, table_schema, custom_order, null_mode)?
+        } else {
+            Table::from_sqlite_with_order(&conn, table_schema, order_mode, null_mode)?
+        };
 
         for warning in &result.warnings {
             eprintln!("Warning: {}", warning);
         }
 
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        write_table_csv(&result.table, &csv_path)?;
+        write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
         pb.inc(1);
     }
     pb.finish_and_clear();
@@ -129,7 +330,7 @@ fn export_sqlite(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
     Ok(())
 }
 
-fn export_duckdb(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, filter: &TableFilter) -> Result<()> {
+fn export_duckdb(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, filter: &TableFilter) -> Result<()> {
     let conn = DuckDbConnection::open(db_path)
         .with_context(|| format!("Failed to open DuckDB database: {}", db_path.display()))?;
 
@@ -148,14 +349,17 @@ fn export_duckdb(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
         }
 
         pb.set_message(table_name.clone());
-        let result = Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?;
+        let result = if let Some(custom_order) = order_by {
+            Table::from_duckdb_custom_order(&conn, table_schema, custom_order, null_mode)?
+        } else {
+            Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?
+        };
 
         for warning in &result.warnings {
             eprintln!("Warning: {}", warning);
         }
 
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        write_table_csv(&result.table, &csv_path)?;
+        write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
         pb.inc(1);
     }
     pb.finish_and_clear();
@@ -163,7 +367,7 @@ fn export_duckdb(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
     Ok(())
 }
 
-fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, filter: &TableFilter) -> Result<()> {
+fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, filter: &TableFilter) -> Result<()> {
     // Load parquetdb into in-memory DuckDB, then export to CSV
     let conn = DuckDbConnection::open_in_memory()
         .context("Failed to create in-memory DuckDB connection")?;
@@ -212,14 +416,17 @@ fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMo
         }
 
         pb.set_message(table_name.clone());
-        let result = Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?;
+        let result = if let Some(custom_order) = order_by {
+            Table::from_duckdb_custom_order(&conn, table_schema, custom_order, null_mode)?
+        } else {
+            Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?
+        };
 
         for warning in &result.warnings {
             eprintln!("Warning: {}", warning);
         }
 
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        write_table_csv(&result.table, &csv_path)?;
+        write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
         pb.inc(1);
     }
     pb.finish_and_clear();
@@ -227,7 +434,7 @@ fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMo
     Ok(())
 }
 
-fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, filter: &TableFilter) -> Result<()> {
+fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, filter: &TableFilter) -> Result<()> {
     // Load single parquet into in-memory DuckDB
     let conn = DuckDbConnection::open_in_memory()
         .context("Failed to create in-memory DuckDB connection")?;
@@ -265,14 +472,17 @@ fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: Orde
     let table_schema = schema.tables.get(table_name)
         .ok_or_else(|| anyhow::anyhow!("Table not found after creation"))?;
 
-    let result = Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?;
+    let result = if let Some(custom_order) = order_by {
+        Table::from_duckdb_custom_order(&conn, table_schema, custom_order, null_mode)?
+    } else {
+        Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?
+    };
 
     for warning in &result.warnings {
         eprintln!("Warning: {}", warning);
     }
 
-    let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-    write_table_csv(&result.table, &csv_path)?;
+    write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
 
     Ok(())
 }
@@ -298,7 +508,7 @@ mod tests {
         drop(conn);
 
         // Convert to CSV
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Verify structure
         assert!(csvdb.join("schema.sql").exists());
@@ -318,7 +528,7 @@ mod tests {
         conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])?;
         drop(conn);
 
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
 
         assert_eq!(csvdb, output);
         assert!(csvdb.join("schema.sql").exists());
@@ -336,7 +546,7 @@ mod tests {
         conn.execute("INSERT INTO events VALUES ('2024-01-01', 'test')", [])?;
         drop(conn);
 
-        let result = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]));
+        let result = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("events"));
@@ -355,7 +565,7 @@ mod tests {
         conn.execute("INSERT INTO events VALUES ('2024-01-01', 'test')", [])?;
         drop(conn);
 
-        let csvdb = to_csv(&db_path, OrderMode::AllColumns, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::AllColumns, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(csvdb.join("events.csv").exists());
 
         Ok(())
@@ -371,7 +581,7 @@ mod tests {
         conn.execute("INSERT INTO events VALUES ('2024-01-01', 'test')", [])?;
         drop(conn);
 
-        let csvdb = to_csv(&db_path, OrderMode::AddSyntheticKey, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::AddSyntheticKey, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(csvdb.join("events.csv").exists());
 
         // Read the CSV and verify it has the synthetic key column
@@ -398,7 +608,7 @@ mod tests {
         drop(conn);
 
         // Convert to CSV
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         assert!(csvdb.join("schema.sql").exists());
         assert!(csvdb.join("items.csv").exists());

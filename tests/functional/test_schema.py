@@ -166,6 +166,107 @@ class TestDependentViews:
         rebuilt_checksum = run_csvdb("checksum", str(temp_dir / "multi_dep.sqlite")).stdout.strip()
         assert original_checksum == rebuilt_checksum
 
+    def test_view_reverse_alpha_dependency(self, run_csvdb, temp_dir):
+        """View a_derived depends on z_base — must work via DuckDB despite alpha order."""
+        try:
+            import duckdb
+        except ImportError:
+            import pytest
+            pytest.skip("duckdb not installed")
+
+        db_path = temp_dir / "reverse_alpha.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE data (id INTEGER PRIMARY KEY, val INTEGER)")
+        conn.executemany("INSERT INTO data VALUES (?, ?)", [(1, 10), (2, 20), (3, 30)])
+        conn.execute("CREATE VIEW z_base AS SELECT * FROM data WHERE val > 10")
+        conn.execute("CREATE VIEW a_derived AS SELECT * FROM z_base WHERE val < 30")
+        conn.commit()
+        conn.close()
+
+        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+
+        run_csvdb("to-csvdb", str(db_path))
+        run_csvdb("to-duckdb", "--force", str(temp_dir / "reverse_alpha.csvdb"))
+
+        duck_checksum = run_csvdb("checksum", str(temp_dir / "reverse_alpha.duckdb")).stdout.strip()
+        assert original_checksum == duck_checksum
+
+        duck_conn = duckdb.connect(str(temp_dir / "reverse_alpha.duckdb"))
+        rows = duck_conn.execute("SELECT * FROM a_derived ORDER BY id").fetchall()
+        duck_conn.close()
+        assert len(rows) == 1
+        assert rows[0][1] == 20
+
+    def test_three_level_view_chain(self, run_csvdb, temp_dir):
+        """Three-level chain with reverse-alpha names roundtrips through DuckDB."""
+        try:
+            import duckdb
+        except ImportError:
+            import pytest
+            pytest.skip("duckdb not installed")
+
+        db_path = temp_dir / "three_level.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE data (id INTEGER PRIMARY KEY, val INTEGER)")
+        conn.executemany("INSERT INTO data VALUES (?, ?)", [(i, i * 10) for i in range(1, 6)])
+        conn.execute("CREATE VIEW z_step1 AS SELECT * FROM data WHERE val > 10")
+        conn.execute("CREATE VIEW m_step2 AS SELECT * FROM z_step1 WHERE val < 50")
+        conn.execute("CREATE VIEW a_step3 AS SELECT * FROM m_step2 WHERE val > 20")
+        conn.commit()
+        conn.close()
+
+        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+
+        run_csvdb("to-csvdb", str(db_path))
+        run_csvdb("to-duckdb", "--force", str(temp_dir / "three_level.csvdb"))
+
+        duck_checksum = run_csvdb("checksum", str(temp_dir / "three_level.duckdb")).stdout.strip()
+        assert original_checksum == duck_checksum
+
+        duck_conn = duckdb.connect(str(temp_dir / "three_level.duckdb"))
+        rows = duck_conn.execute("SELECT * FROM a_step3 ORDER BY id").fetchall()
+        duck_conn.close()
+        assert len(rows) == 2  # val=30 and val=40
+
+    def test_diamond_view_dependency(self, run_csvdb, temp_dir):
+        """Diamond dependency: two views share a base, a fourth depends on both."""
+        try:
+            import duckdb
+        except ImportError:
+            import pytest
+            pytest.skip("duckdb not installed")
+
+        db_path = temp_dir / "diamond.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE data (id INTEGER PRIMARY KEY, val INTEGER, cat TEXT)")
+        conn.executemany("INSERT INTO data VALUES (?, ?, ?)", [
+            (1, 10, "a"), (2, 20, "b"), (3, 30, "a"), (4, 40, "b"),
+        ])
+        conn.execute("CREATE VIEW z_base AS SELECT * FROM data WHERE val > 10")
+        conn.execute("CREATE VIEW m_left AS SELECT * FROM z_base WHERE cat = 'a'")
+        conn.execute("CREATE VIEW m_right AS SELECT * FROM z_base WHERE cat = 'b'")
+        conn.execute("""
+            CREATE VIEW a_combined AS
+            SELECT * FROM m_left
+            UNION ALL
+            SELECT * FROM m_right
+        """)
+        conn.commit()
+        conn.close()
+
+        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+
+        run_csvdb("to-csvdb", str(db_path))
+        run_csvdb("to-duckdb", "--force", str(temp_dir / "diamond.csvdb"))
+
+        duck_checksum = run_csvdb("checksum", str(temp_dir / "diamond.duckdb")).stdout.strip()
+        assert original_checksum == duck_checksum
+
+        duck_conn = duckdb.connect(str(temp_dir / "diamond.duckdb"))
+        rows = duck_conn.execute("SELECT * FROM a_combined ORDER BY id").fetchall()
+        duck_conn.close()
+        assert len(rows) == 3  # val > 10: ids 2,3,4
+
 
 class TestSchemaEdgeCases:
     """Tests for schema edge cases."""

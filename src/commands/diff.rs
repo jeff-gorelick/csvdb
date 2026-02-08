@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::core::{InputFormat, Schema, Table};
-use crate::core::csv::read_table_csv;
+use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::commands::checksum::normalize_value;
 use crate::{OrderMode, NullMode};
 
@@ -27,9 +27,8 @@ fn load_csvdb(csvdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
 
     let mut tables = BTreeMap::new();
     for (table_name, table_schema) in &schema.tables {
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        if csv_path.exists() {
-            let table = read_table_csv(&csv_path, table_schema)?;
+        if let Some(csv_path) = find_table_file(csvdb_dir, table_name) {
+            let table = read_table_csv_auto(&csv_path, table_schema)?;
             tables.insert(table_name.clone(), table);
         }
     }

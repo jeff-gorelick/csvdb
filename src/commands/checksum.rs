@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::core::{InputFormat, Schema, TableSchema};
-use crate::core::csv::read_table_csv;
+use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::core::table::Table;
 use crate::{OrderMode, NullMode, TableFilter};
 
@@ -55,9 +55,8 @@ fn checksum_csvdb(csvdb_dir: &Path, filter: &TableFilter) -> Result<String> {
         hash_table_schema(&mut hasher, table_schema);
 
         // Hash row data
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
-        if csv_path.exists() {
-            let table = read_table_csv(&csv_path, table_schema)?;
+        if let Some(csv_path) = find_table_file(csvdb_dir, table_name) {
+            let table = read_table_csv_auto(&csv_path, table_schema)?;
             hash_table_data(&mut hasher, &table);
         }
         pb.inc(1);
@@ -405,7 +404,7 @@ mod tests {
 
         // Convert to CSV
         let no_filter = TableFilter::new(vec![], vec![]);
-        let csvdb = to_csv::to_csv(&db_path, OrderMode::Pk, NullMode::Marker, None, true, &no_filter)?;
+        let csvdb = to_csv::to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &no_filter)?;
         let csvdb_checksum = checksum(&csvdb, &TableFilter::new(vec![], vec![]))?;
 
         // Convert to DuckDB

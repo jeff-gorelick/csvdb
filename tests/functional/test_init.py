@@ -362,3 +362,87 @@ class TestInitEdgeCases:
         assert '"id"' in schema
         assert '"name"' in schema
         assert '"value"' in schema
+
+
+class TestInitRichTypeInference:
+    """Tests for Boolean, Date, and Timestamp type inference."""
+
+    def test_init_boolean_inference(self, run_csvdb, temp_dir):
+        """init should infer BOOLEAN type."""
+        csv_dir = temp_dir / "bool_infer"
+        csv_dir.mkdir()
+        (csv_dir / "data.csv").write_text(
+            "id,active,verified\n"
+            "1,true,yes\n"
+            "2,false,no\n"
+            "3,True,Yes\n"
+        )
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "bool_infer.csvdb" / "schema.sql").read_text()
+        assert "BOOLEAN" in schema
+
+    def test_init_date_inference(self, run_csvdb, temp_dir):
+        """init should infer DATE type for YYYY-MM-DD values."""
+        csv_dir = temp_dir / "date_infer"
+        csv_dir.mkdir()
+        (csv_dir / "data.csv").write_text(
+            "id,birth_date\n"
+            "1,1990-01-15\n"
+            "2,2000-06-30\n"
+            "3,1985-12-25\n"
+        )
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "date_infer.csvdb" / "schema.sql").read_text()
+        assert "DATE" in schema
+
+    def test_init_timestamp_inference(self, run_csvdb, temp_dir):
+        """init should infer TIMESTAMP type for datetime values."""
+        csv_dir = temp_dir / "ts_infer"
+        csv_dir.mkdir()
+        (csv_dir / "data.csv").write_text(
+            "id,created_at\n"
+            "1,2024-01-15T10:30:00\n"
+            "2,2024-06-30 14:45:00\n"
+            "3,2024-12-25T08:00:00Z\n"
+        )
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "ts_infer.csvdb" / "schema.sql").read_text()
+        assert "TIMESTAMP" in schema
+
+    def test_init_date_timestamp_widening(self, run_csvdb, temp_dir):
+        """Mixed dates and timestamps should widen to TIMESTAMP."""
+        csv_dir = temp_dir / "dt_widen"
+        csv_dir.mkdir()
+        (csv_dir / "data.csv").write_text(
+            "id,event_time\n"
+            "1,2024-01-15\n"
+            "2,2024-06-30T14:45:00\n"
+        )
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "dt_widen.csvdb" / "schema.sql").read_text()
+        assert "TIMESTAMP" in schema
+
+    def test_init_boolean_integer_widening(self, run_csvdb, temp_dir):
+        """Mixed booleans and integers should widen to INTEGER."""
+        csv_dir = temp_dir / "bi_widen"
+        csv_dir.mkdir()
+        (csv_dir / "data.csv").write_text(
+            "id,value\n"
+            "1,true\n"
+            "2,42\n"
+            "3,false\n"
+        )
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "bi_widen.csvdb" / "schema.sql").read_text()
+        # value should be INTEGER (boolean + integer widens to integer)
+        assert '"value" INTEGER' in schema

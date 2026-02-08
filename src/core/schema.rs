@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use duckdb::Connection as DuckDbConnection;
 use rusqlite::Connection;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
@@ -46,6 +46,83 @@ impl TableSchema {
 pub struct View {
     pub name: String,
     pub sql: String,
+}
+
+/// Topologically sort views so that dependencies come before dependents.
+///
+/// Tokenizes each view's SQL on non-alphanumeric/underscore boundaries and
+/// checks tokens against the full set of view names to discover dependencies.
+/// Uses Kahn's algorithm (BFS). Returns an error if a cycle is detected.
+fn sort_views_by_dependency(views: Vec<View>) -> Result<Vec<View>> {
+    if views.len() <= 1 {
+        return Ok(views);
+    }
+
+    let view_names: HashSet<&str> = views.iter().map(|v| v.name.as_str()).collect();
+    let name_to_idx: HashMap<&str, usize> = views.iter().enumerate().map(|(i, v)| (v.name.as_str(), i)).collect();
+
+    // Build adjacency list: deps[i] = set of indices that view i depends on
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); views.len()]; // dependents[dep] = views that depend on dep
+    let mut in_degree: Vec<usize> = vec![0; views.len()];
+
+    for (i, view) in views.iter().enumerate() {
+        // Tokenize SQL on non-alphanumeric/underscore boundaries
+        let tokens: HashSet<&str> = view
+            .sql
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|t| !t.is_empty())
+            .collect();
+
+        for token in &tokens {
+            if let Some(&dep_idx) = name_to_idx.get(token) {
+                if dep_idx != i && view_names.contains(token) {
+                    dependents[dep_idx].push(i);
+                    in_degree[i] += 1;
+                }
+            }
+        }
+    }
+
+    // Kahn's algorithm
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    for (i, &deg) in in_degree.iter().enumerate() {
+        if deg == 0 {
+            queue.push_back(i);
+        }
+    }
+
+    let mut sorted_indices: Vec<usize> = Vec::with_capacity(views.len());
+    while let Some(idx) = queue.pop_front() {
+        sorted_indices.push(idx);
+        for &dependent in &dependents[idx] {
+            in_degree[dependent] -= 1;
+            if in_degree[dependent] == 0 {
+                queue.push_back(dependent);
+            }
+        }
+    }
+
+    if sorted_indices.len() != views.len() {
+        let cycle_views: Vec<&str> = views
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| in_degree[*i] > 0)
+            .map(|(_, v)| v.name.as_str())
+            .collect();
+        bail!(
+            "Circular dependency detected among views: {}",
+            cycle_views.join(", ")
+        );
+    }
+
+    // Rebuild vec in sorted order
+    let mut indexed_views: Vec<Option<View>> = views.into_iter().map(Some).collect();
+    let sorted: Vec<View> = sorted_indices
+        .into_iter()
+        .map(|i| indexed_views[i].take().unwrap())
+        .collect();
+
+    Ok(sorted)
 }
 
 #[derive(Debug, Clone)]
@@ -359,8 +436,9 @@ impl Schema {
             }
         }
 
-        // Write views at the end (they may depend on tables)
-        for view in &self.views {
+        // Write views at the end, sorted so dependencies come first
+        let sorted_views = sort_views_by_dependency(self.views.clone())?;
+        for view in &sorted_views {
             content.push_str("\n");
             content.push_str(&view.sql);
             content.push_str(";\n");
@@ -547,5 +625,90 @@ mod tests {
         // Newlines/tabs collapsed
         let result = normalize_view_sql("SELECT\n  id\nFROM\n  users");
         assert_eq!(result, "SELECT ID FROM USERS");
+    }
+
+    #[test]
+    fn test_sort_views_by_dependency() {
+        // a_derived depends on z_base → z_base should come first
+        let views = vec![
+            View {
+                name: "a_derived".to_string(),
+                sql: "CREATE VIEW a_derived AS SELECT * FROM z_base WHERE val > 10".to_string(),
+            },
+            View {
+                name: "z_base".to_string(),
+                sql: "CREATE VIEW z_base AS SELECT * FROM some_table".to_string(),
+            },
+        ];
+        let sorted = sort_views_by_dependency(views).unwrap();
+        assert_eq!(sorted[0].name, "z_base");
+        assert_eq!(sorted[1].name, "a_derived");
+    }
+
+    #[test]
+    fn test_sort_views_deep_chain() {
+        // c depends on b, b depends on a → a, b, c
+        let views = vec![
+            View {
+                name: "c_view".to_string(),
+                sql: "CREATE VIEW c_view AS SELECT * FROM b_view".to_string(),
+            },
+            View {
+                name: "a_view".to_string(),
+                sql: "CREATE VIEW a_view AS SELECT * FROM some_table".to_string(),
+            },
+            View {
+                name: "b_view".to_string(),
+                sql: "CREATE VIEW b_view AS SELECT * FROM a_view".to_string(),
+            },
+        ];
+        let sorted = sort_views_by_dependency(views).unwrap();
+        assert_eq!(sorted[0].name, "a_view");
+        assert_eq!(sorted[1].name, "b_view");
+        assert_eq!(sorted[2].name, "c_view");
+    }
+
+    #[test]
+    fn test_sort_views_circular() {
+        // a depends on b, b depends on a → error
+        let views = vec![
+            View {
+                name: "view_a".to_string(),
+                sql: "CREATE VIEW view_a AS SELECT * FROM view_b".to_string(),
+            },
+            View {
+                name: "view_b".to_string(),
+                sql: "CREATE VIEW view_b AS SELECT * FROM view_a".to_string(),
+            },
+        ];
+        let result = sort_views_by_dependency(views);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Circular dependency"));
+        assert!(err.contains("view_a"));
+        assert!(err.contains("view_b"));
+    }
+
+    #[test]
+    fn test_sort_views_no_deps() {
+        // Independent views — order should be preserved (stable)
+        let views = vec![
+            View {
+                name: "alpha".to_string(),
+                sql: "CREATE VIEW alpha AS SELECT * FROM table1".to_string(),
+            },
+            View {
+                name: "beta".to_string(),
+                sql: "CREATE VIEW beta AS SELECT * FROM table2".to_string(),
+            },
+            View {
+                name: "gamma".to_string(),
+                sql: "CREATE VIEW gamma AS SELECT * FROM table3".to_string(),
+            },
+        ];
+        let sorted = sort_views_by_dependency(views).unwrap();
+        assert_eq!(sorted[0].name, "alpha");
+        assert_eq!(sorted[1].name, "beta");
+        assert_eq!(sorted[2].name, "gamma");
     }
 }

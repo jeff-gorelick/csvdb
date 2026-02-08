@@ -14,6 +14,7 @@ pub fn to_parquetdb(
     input_path: &Path,
     order_mode: OrderMode,
     null_mode: NullMode,
+    order_by: Option<&str>,
     output_dir: Option<&Path>,
     force: bool,
     filter: &TableFilter,
@@ -80,8 +81,12 @@ pub fn to_parquetdb(
         let path_str = abs_path.to_string_lossy().replace('\\', "/");
         let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
-        // Build ORDER BY clause based on order_mode
-        let order_clause = build_order_clause(&schema.tables[table_name], order_mode);
+        // Build ORDER BY clause based on order_by or order_mode
+        let order_clause = if let Some(custom_order) = order_by {
+            format!("ORDER BY {}", custom_order)
+        } else {
+            build_order_clause(&schema.tables[table_name], order_mode)
+        };
 
         let copy_sql = format!(
             "COPY (SELECT * FROM \"{}\" {}) TO '{}' (FORMAT PARQUET)",
@@ -113,8 +118,11 @@ pub fn to_parquetdb(
     let config = CsvdbConfig {
         format_version: Some(CURRENT_FORMAT_VERSION.to_string()),
         created_by: Some(created_by_string()),
-        order: Some(order_str.to_string()),
+        order: if order_by.is_none() { Some(order_str.to_string()) } else { None },
         null_mode: Some(null_str.to_string()),
+        natural_sort: None,
+        order_by: order_by.map(|s| s.to_string()),
+        compressed: None,
         tables: if filter.tables.is_empty() {
             None
         } else {
@@ -125,6 +133,7 @@ pub fn to_parquetdb(
         } else {
             Some(filter.exclude.clone())
         },
+        table_checksums: None,
     };
     config.write(&parquetdb_dir)?;
 
@@ -358,6 +367,7 @@ mod tests {
             OrderMode::Pk,
             NullMode::Marker,
             None,
+            None,
             true,
             &TableFilter::new(vec![], vec![]),
         )?;
@@ -402,6 +412,7 @@ mod tests {
             &csvdb_dir,
             OrderMode::Pk,
             NullMode::Marker,
+            None,
             None,
             true,
             &TableFilter::new(vec![], vec![]),

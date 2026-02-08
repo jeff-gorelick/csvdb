@@ -10,16 +10,22 @@ use crate::core::config::{CsvdbConfig, CURRENT_FORMAT_VERSION, created_by_string
 /// Inferred column type from CSV data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferredType {
+    Boolean,
     Integer,
     Real,
+    Date,
+    Timestamp,
     Text,
 }
 
 impl InferredType {
     fn as_sql(&self) -> &'static str {
         match self {
+            InferredType::Boolean => "BOOLEAN",
             InferredType::Integer => "INTEGER",
             InferredType::Real => "REAL",
+            InferredType::Date => "DATE",
+            InferredType::Timestamp => "TIMESTAMP",
             InferredType::Text => "TEXT",
         }
     }
@@ -28,8 +34,25 @@ impl InferredType {
     fn widen(self, other: InferredType) -> InferredType {
         use InferredType::*;
         match (self, other) {
+            // Same type stays same
+            (Boolean, Boolean) => Boolean,
             (Integer, Integer) => Integer,
-            (Integer, Real) | (Real, Integer) | (Real, Real) => Real,
+            (Real, Real) => Real,
+            (Date, Date) => Date,
+            (Timestamp, Timestamp) => Timestamp,
+            (Text, Text) => Text,
+
+            // Boolean + numeric = numeric
+            (Boolean, Integer) | (Integer, Boolean) => Integer,
+            (Boolean, Real) | (Real, Boolean) => Real,
+
+            // Integer + Real = Real
+            (Integer, Real) | (Real, Integer) => Real,
+
+            // Date + Timestamp = Timestamp
+            (Date, Timestamp) | (Timestamp, Date) => Timestamp,
+
+            // All other mismatches = Text
             _ => Text,
         }
     }
@@ -107,7 +130,13 @@ fn infer_value_type(value: &str) -> InferredType {
         return InferredType::Text; // Will be treated as nullable
     }
 
-    // Try integer first
+    // Boolean: true/false/yes/no/t/f (case-insensitive). NOT "1"/"0" (those stay Integer)
+    let lower = value.to_lowercase();
+    if matches!(lower.as_str(), "true" | "false" | "yes" | "no" | "t" | "f") {
+        return InferredType::Boolean;
+    }
+
+    // Try integer
     if value.parse::<i64>().is_ok() {
         return InferredType::Integer;
     }
@@ -117,7 +146,53 @@ fn infer_value_type(value: &str) -> InferredType {
         return InferredType::Real;
     }
 
+    // Timestamp: YYYY-MM-DD[T ]HH:MM:SS (length >= 19, date prefix + separator + time)
+    if value.len() >= 19 && is_timestamp(value) {
+        return InferredType::Timestamp;
+    }
+
+    // Date: YYYY-MM-DD (exactly 10 chars, digits-dash-digits-dash-digits)
+    if value.len() == 10 && is_date(value) {
+        return InferredType::Date;
+    }
+
     InferredType::Text
+}
+
+/// Check if a value looks like a date: YYYY-MM-DD
+fn is_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 {
+        return false;
+    }
+    // YYYY-MM-DD
+    bytes[0..4].iter().all(|b| b.is_ascii_digit())
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(|b| b.is_ascii_digit())
+}
+
+/// Check if a value looks like a timestamp: YYYY-MM-DD[T ]HH:MM:SS...
+fn is_timestamp(value: &str) -> bool {
+    if value.len() < 19 {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    // Check date prefix: YYYY-MM-DD
+    if !is_date(&value[..10]) {
+        return false;
+    }
+    // Separator: T or space
+    if bytes[10] != b'T' && bytes[10] != b' ' {
+        return false;
+    }
+    // HH:MM:SS
+    bytes[11..13].iter().all(|b| b.is_ascii_digit())
+        && bytes[13] == b':'
+        && bytes[14..16].iter().all(|b| b.is_ascii_digit())
+        && bytes[16] == b':'
+        && bytes[17..19].iter().all(|b| b.is_ascii_digit())
 }
 
 /// Infer schema for a single CSV file.
@@ -393,6 +468,38 @@ mod tests {
     }
 
     #[test]
+    fn test_infer_value_type_boolean() {
+        assert_eq!(infer_value_type("true"), InferredType::Boolean);
+        assert_eq!(infer_value_type("false"), InferredType::Boolean);
+        assert_eq!(infer_value_type("True"), InferredType::Boolean);
+        assert_eq!(infer_value_type("FALSE"), InferredType::Boolean);
+        assert_eq!(infer_value_type("yes"), InferredType::Boolean);
+        assert_eq!(infer_value_type("no"), InferredType::Boolean);
+        assert_eq!(infer_value_type("t"), InferredType::Boolean);
+        assert_eq!(infer_value_type("f"), InferredType::Boolean);
+        // "1" and "0" stay Integer
+        assert_eq!(infer_value_type("1"), InferredType::Integer);
+        assert_eq!(infer_value_type("0"), InferredType::Integer);
+    }
+
+    #[test]
+    fn test_infer_value_type_date() {
+        assert_eq!(infer_value_type("2024-01-15"), InferredType::Date);
+        assert_eq!(infer_value_type("1999-12-31"), InferredType::Date);
+        assert_eq!(infer_value_type("2024-1-15"), InferredType::Text); // not zero-padded
+        assert_eq!(infer_value_type("2024/01/15"), InferredType::Text); // wrong separator
+    }
+
+    #[test]
+    fn test_infer_value_type_timestamp() {
+        assert_eq!(infer_value_type("2024-01-15T10:30:00"), InferredType::Timestamp);
+        assert_eq!(infer_value_type("2024-01-15 10:30:00"), InferredType::Timestamp);
+        assert_eq!(infer_value_type("2024-01-15T10:30:00.123Z"), InferredType::Timestamp);
+        assert_eq!(infer_value_type("2024-01-15T10:30:00+05:00"), InferredType::Timestamp);
+        assert_eq!(infer_value_type("2024-01-15T10"), InferredType::Text); // too short
+    }
+
+    #[test]
     fn test_type_widening() {
         use InferredType::*;
         assert_eq!(Integer.widen(Integer), Integer);
@@ -401,6 +508,28 @@ mod tests {
         assert_eq!(Integer.widen(Text), Text);
         assert_eq!(Real.widen(Text), Text);
         assert_eq!(Text.widen(Integer), Text);
+    }
+
+    #[test]
+    fn test_type_widening_new_types() {
+        use InferredType::*;
+        // Boolean + numeric = numeric
+        assert_eq!(Boolean.widen(Integer), Integer);
+        assert_eq!(Integer.widen(Boolean), Integer);
+        assert_eq!(Boolean.widen(Real), Real);
+        assert_eq!(Real.widen(Boolean), Real);
+        // Date + Timestamp = Timestamp
+        assert_eq!(Date.widen(Timestamp), Timestamp);
+        assert_eq!(Timestamp.widen(Date), Timestamp);
+        // Date + Integer = Text (mismatch)
+        assert_eq!(Date.widen(Integer), Text);
+        assert_eq!(Integer.widen(Date), Text);
+        // Boolean + Text = Text
+        assert_eq!(Boolean.widen(Text), Text);
+        // Date + Date = Date
+        assert_eq!(Date.widen(Date), Date);
+        // Boolean + Date = Text
+        assert_eq!(Boolean.widen(Date), Text);
     }
 
     #[test]
