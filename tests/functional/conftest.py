@@ -56,6 +56,7 @@ def run_csvdb(csvdb_bin):
             cmd,
             capture_output=capture,
             text=True,
+            encoding="utf-8",
             check=False
         )
         if check and result.returncode != 0:
