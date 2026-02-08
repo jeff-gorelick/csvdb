@@ -22,6 +22,9 @@ jobs:
       - name: Run Rust tests
         run: cargo test
 
+      - name: Build release binary
+        run: cargo build --release
+
       - uses: astral-sh/setup-uv@v4
 
       - name: Run functional tests
