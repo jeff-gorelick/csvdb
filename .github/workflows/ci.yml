@@ -20,7 +20,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run Rust tests (core)
-        run: cargo test --release -p csvdb
+        run: cargo test --release -p csvdb ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
       - name: Check FFI crate
         run: cargo check -p csvdb-ffi
