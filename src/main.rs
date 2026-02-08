@@ -1,10 +1,16 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use csvdb::commands::{checksum, diff, init, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch};
+use csvdb::commands::{checksum, diff, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch};
 use csvdb::{CsvdbConfig, InputFormat, OrderMode, NullMode, TableFilter};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SqlFormat {
+    Csv,
+    Table,
+}
 
 #[derive(Parser)]
 #[command(name = "csvdb")]
@@ -191,6 +197,19 @@ enum Commands {
         exclude: Vec<String>,
     },
 
+    /// Run a read-only SQL query against any supported format
+    Sql {
+        /// SQL query to execute (SELECT only)
+        query: String,
+
+        /// Path to database or directory
+        path: PathBuf,
+
+        /// Output format (default: table for TTY, csv for pipe)
+        #[arg(long, value_enum)]
+        format: Option<SqlFormat>,
+    },
+
     /// Watch a .csvdb directory and rebuild target on changes
     Watch {
         /// Path to .csvdb directory
@@ -258,6 +277,13 @@ fn main() -> ExitCode {
         Commands::Checksum { path, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
             run_checksum(&path, &filter)
+        }
+        Commands::Sql { query, path, format } => {
+            let format = format.map(|f| match f {
+                SqlFormat::Csv => sql::OutputFormat::Csv,
+                SqlFormat::Table => sql::OutputFormat::Table,
+            });
+            run_sql(&path, &query, format)
         }
         Commands::Watch { path, target, order, null_mode, order_by, debounce, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
@@ -474,6 +500,11 @@ fn run_diff(left: &PathBuf, right: &PathBuf, summary: bool) -> Result<ExitCode> 
 fn run_checksum(path: &PathBuf, filter: &TableFilter) -> Result<ExitCode> {
     let hash = checksum::checksum(path, filter)?;
     println!("{}", hash);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_sql(path: &PathBuf, query: &str, format: Option<sql::OutputFormat>) -> Result<ExitCode> {
+    sql::sql(path, query, format)?;
     Ok(ExitCode::SUCCESS)
 }
 

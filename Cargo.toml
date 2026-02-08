@@ -23,3 +23,5 @@ indicatif = "0.17"
 tempfile = "3"
 flate2 = "1"
 notify = "7"
+comfy-table = "7"
+arrow = { version = "56", default-features = false, features = ["prettyprint"] }
