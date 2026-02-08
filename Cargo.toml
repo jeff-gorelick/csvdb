@@ -6,7 +6,7 @@ description = "Convert between SQLite/DuckDB databases and CSV directories"
 license = "MIT"
 repository = "https://github.com/jeff-gorelick/csvdb"
 readme = "README.md"
-keywords = ["csv", "sqlite", "duckdb", "git", "database"]
+keywords = ["csv", "sqlite", "duckdb", "parquet", "git"]
 categories = ["command-line-utilities", "database"]
 exclude = ["CLAUDE.md", "tests/"]
 

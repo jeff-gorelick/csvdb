@@ -1,8 +1,29 @@
 # csvdb
 
+Version-control your relational data like code.
+
 > **Note:** This is beta software. The API and file format may change. Use with caution in production.
 
-A deterministic, git-friendly way to store relational data as CSV and convert it to SQLite, DuckDB, or Parquet when you need fast queries.
+SQLite and DuckDB files are binary — git can't diff them, reviewers can't read them, and merges are impossible. csvdb converts your database into a directory of plain-text CSV files + `schema.sql`, fully diffable and round-trip lossless. Convert back to SQLite, DuckDB, or Parquet when you need query performance.
+
+```diff
+ # git diff myapp.csvdb/rates.csv
+ "date","rate"
+ "2024-01-01","4.50"
+-"2024-04-01","4.25"
++"2024-04-01","3.75"
++"2024-07-01","3.50"
+```
+
+Every change is a readable, reviewable line in a PR. No binary blobs, no "file changed" with no context.
+
+**Use cases:**
+- Seed data and test fixtures committed alongside code
+- Config and lookup tables reviewed in PRs before deploy
+- CI integrity checks: `csvdb checksum data.csvdb/ | grep $EXPECTED`
+- Migrating between SQLite, DuckDB, and Parquet without ETL scripts
+- Manual edits in a spreadsheet or text editor, rebuild with one command
+- Audit trail: `git blame` on any CSV row shows who changed it and when
 
 ## Directory Layouts
 
@@ -50,7 +71,7 @@ csvdb lets you store data as CSV (human-readable, git-friendly) and convert to S
 ## Installation
 
 ```bash
-cargo install --path .
+cargo install csvdb
 ```
 
 ## Quick Start
@@ -512,7 +533,7 @@ cargo run -- checksum mydb.sqlite
 # Rust unit tests
 cargo test
 
-# Python functional tests (151 tests)
+# Python functional tests (189 tests)
 cd tests/functional
 uv run pytest
 
