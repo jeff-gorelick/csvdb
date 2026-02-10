@@ -161,7 +161,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<()> {
         }
     }
 
-    for table_name in schema.tables.keys() {
+    for table_name in schema.tables_in_fk_order()? {
         if let Some(csv_path) = find_table_file(path, table_name) {
             let abs_path = csv_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -194,7 +194,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<()> {
         }
     }
 
-    for table_name in schema.tables.keys() {
+    for table_name in schema.tables_in_fk_order()? {
         let parquet_path = path.join(format!("{}.parquet", table_name));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;

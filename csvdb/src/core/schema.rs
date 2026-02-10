@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use duckdb::Connection as DuckDbConnection;
+use regex::Regex;
 use rusqlite::Connection;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
@@ -123,6 +124,76 @@ fn sort_views_by_dependency(views: Vec<View>) -> Result<Vec<View>> {
         .collect();
 
     Ok(sorted)
+}
+
+/// Topologically sort tables so that referenced tables come before tables with
+/// foreign keys. Parses REFERENCES clauses from each table's CREATE TABLE SQL.
+/// Uses Kahn's algorithm (BFS). Returns an error if a cycle is detected.
+fn sort_tables_by_fk_dependency<'a>(tables: Vec<&'a TableSchema>) -> Result<Vec<&'a TableSchema>> {
+    if tables.len() <= 1 {
+        return Ok(tables);
+    }
+
+    let name_to_idx: HashMap<&str, usize> = tables
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.name.as_str(), i))
+        .collect();
+
+    let re = Regex::new(r#"(?i)REFERENCES\s+"?([^"\s(]+)"?"#).unwrap();
+
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); tables.len()];
+    let mut in_degree: Vec<usize> = vec![0; tables.len()];
+
+    for (i, table) in tables.iter().enumerate() {
+        let mut deps: HashSet<usize> = HashSet::new();
+        for cap in re.captures_iter(&table.sql) {
+            let ref_table = cap.get(1).unwrap().as_str();
+            if let Some(&dep_idx) = name_to_idx.get(ref_table) {
+                if dep_idx != i {
+                    deps.insert(dep_idx);
+                }
+            }
+        }
+        for dep_idx in deps {
+            dependents[dep_idx].push(i);
+            in_degree[i] += 1;
+        }
+    }
+
+    // Kahn's algorithm
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    for (i, &deg) in in_degree.iter().enumerate() {
+        if deg == 0 {
+            queue.push_back(i);
+        }
+    }
+
+    let mut sorted_indices: Vec<usize> = Vec::with_capacity(tables.len());
+    while let Some(idx) = queue.pop_front() {
+        sorted_indices.push(idx);
+        for &dependent in &dependents[idx] {
+            in_degree[dependent] -= 1;
+            if in_degree[dependent] == 0 {
+                queue.push_back(dependent);
+            }
+        }
+    }
+
+    if sorted_indices.len() != tables.len() {
+        let cycle_tables: Vec<&str> = tables
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| in_degree[*i] > 0)
+            .map(|(_, t)| t.name.as_str())
+            .collect();
+        bail!(
+            "Circular foreign key dependency detected among tables: {}",
+            cycle_tables.join(", ")
+        );
+    }
+
+    Ok(sorted_indices.into_iter().map(|i| tables[i]).collect())
 }
 
 #[derive(Debug, Clone)]
@@ -419,11 +490,21 @@ impl Schema {
         sql
     }
 
+    /// Return table names sorted by FK dependency (referenced tables first).
+    pub fn tables_in_fk_order(&self) -> Result<Vec<&str>> {
+        let tables: Vec<&TableSchema> = self.tables.values().collect();
+        let sorted = sort_tables_by_fk_dependency(tables)?;
+        Ok(sorted.iter().map(|t| t.name.as_str()).collect())
+    }
+
     pub fn write_schema_sql(&self, path: &Path) -> Result<()> {
         let mut content = String::new();
 
-        // Write tables and their indexes
-        for (i, table) in self.tables.values().enumerate() {
+        // Write tables sorted by FK dependency (referenced tables first)
+        let tables: Vec<&TableSchema> = self.tables.values().collect();
+        let sorted_tables = sort_tables_by_fk_dependency(tables)?;
+
+        for (i, table) in sorted_tables.iter().enumerate() {
             if i > 0 {
                 content.push_str("\n");
             }
@@ -625,6 +706,104 @@ mod tests {
         // Newlines/tabs collapsed
         let result = normalize_view_sql("SELECT\n  id\nFROM\n  users");
         assert_eq!(result, "SELECT ID FROM USERS");
+    }
+
+    #[test]
+    fn test_sort_tables_by_fk_dependency_basic() {
+        let users = TableSchema {
+            name: "users".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"users\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT NOT NULL\n)".to_string(),
+            indexes: vec![],
+        };
+        let orders = TableSchema {
+            name: "orders".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"orders\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"user_id\" INTEGER REFERENCES \"users\"(\"id\")\n)".to_string(),
+            indexes: vec![],
+        };
+        // Alphabetically: orders before users. FK-sorted: users before orders.
+        let tables = vec![&orders, &users];
+        let sorted = sort_tables_by_fk_dependency(tables).unwrap();
+        assert_eq!(sorted[0].name, "users");
+        assert_eq!(sorted[1].name, "orders");
+    }
+
+    #[test]
+    fn test_sort_tables_by_fk_dependency_chain() {
+        let a = TableSchema {
+            name: "a".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"a\" (\"id\" INTEGER PRIMARY KEY)".to_string(),
+            indexes: vec![],
+        };
+        let b = TableSchema {
+            name: "b".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"b\" (\"id\" INTEGER PRIMARY KEY, \"a_id\" INTEGER REFERENCES \"a\"(\"id\"))".to_string(),
+            indexes: vec![],
+        };
+        let c = TableSchema {
+            name: "c".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"c\" (\"id\" INTEGER PRIMARY KEY, \"b_id\" INTEGER REFERENCES \"b\"(\"id\"))".to_string(),
+            indexes: vec![],
+        };
+        let tables = vec![&c, &b, &a];
+        let sorted = sort_tables_by_fk_dependency(tables).unwrap();
+        assert_eq!(sorted[0].name, "a");
+        assert_eq!(sorted[1].name, "b");
+        assert_eq!(sorted[2].name, "c");
+    }
+
+    #[test]
+    fn test_sort_tables_by_fk_no_deps() {
+        let t1 = TableSchema {
+            name: "alpha".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"alpha\" (\"id\" INTEGER PRIMARY KEY)".to_string(),
+            indexes: vec![],
+        };
+        let t2 = TableSchema {
+            name: "beta".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"beta\" (\"id\" INTEGER PRIMARY KEY)".to_string(),
+            indexes: vec![],
+        };
+        let tables = vec![&t1, &t2];
+        let sorted = sort_tables_by_fk_dependency(tables).unwrap();
+        assert_eq!(sorted[0].name, "alpha");
+        assert_eq!(sorted[1].name, "beta");
+    }
+
+    #[test]
+    fn test_sort_tables_by_fk_circular() {
+        let a = TableSchema {
+            name: "a".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"a\" (\"id\" INTEGER PRIMARY KEY, \"b_id\" INTEGER REFERENCES \"b\"(\"id\"))".to_string(),
+            indexes: vec![],
+        };
+        let b = TableSchema {
+            name: "b".to_string(),
+            columns: vec![],
+            pk_columns: vec!["id".to_string()],
+            sql: "CREATE TABLE \"b\" (\"id\" INTEGER PRIMARY KEY, \"a_id\" INTEGER REFERENCES \"a\"(\"id\"))".to_string(),
+            indexes: vec![],
+        };
+        let tables = vec![&a, &b];
+        let result = sort_tables_by_fk_dependency(tables);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Circular"));
     }
 
     #[test]

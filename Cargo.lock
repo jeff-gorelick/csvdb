@@ -637,6 +637,7 @@ dependencies = [
  "flate2",
  "indicatif",
  "notify",
+ "regex",
  "rusqlite",
  "serde",
  "sha2",

@@ -260,7 +260,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<Schema> {
         }
     }
 
-    for table_name in schema.tables.keys() {
+    for table_name in schema.tables_in_fk_order()? {
         let csv_path = path.join(format!("{}.csv", table_name));
         if csv_path.exists() {
             let abs_path = csv_path.canonicalize()?;
@@ -296,7 +296,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<Schema> {
         }
     }
 
-    for table_name in schema.tables.keys() {
+    for table_name in schema.tables_in_fk_order()? {
         let parquet_path = path.join(format!("{}.parquet", table_name));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;

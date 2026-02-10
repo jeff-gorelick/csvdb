@@ -110,8 +110,8 @@ fn load_parquetdb(parquetdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Tabl
         }
     }
 
-    // Load parquet data
-    for table_name in schema.tables.keys() {
+    // Load parquet data in FK dependency order
+    for table_name in schema.tables_in_fk_order()? {
         let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;

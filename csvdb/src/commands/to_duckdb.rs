@@ -91,12 +91,12 @@ pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result
     } else {
         ProgressBar::hidden()
     };
-    for table_name in schema.tables.keys() {
+    for table_name in schema.tables_in_fk_order()? {
         if !filter.matches(table_name) {
             pb.inc(1);
             continue;
         }
-        pb.set_message(table_name.clone());
+        pb.set_message(table_name.to_string());
         if let Some(csv_path) = find_table_file(&csvdb_dir, table_name) {
             // Get absolute path and convert to forward slashes for DuckDB
             let abs_path = csv_path.canonicalize()
