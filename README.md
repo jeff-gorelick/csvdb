@@ -555,6 +555,65 @@ uv run maturin develop --release
 uv run pytest
 ```
 
+## Perl Bindings
+
+csvdb provides Perl bindings via a C FFI shared library and `FFI::Platypus`.
+
+### Setup
+
+```bash
+# Build the shared library
+cargo build --release -p csvdb-ffi
+
+# Install dependencies (macOS)
+brew install cpanminus libffi
+LDFLAGS="-L/opt/homebrew/opt/libffi/lib" \
+CPPFLAGS="-I/opt/homebrew/opt/libffi/include" \
+cpanm FFI::Platypus
+
+# Install dependencies (Linux)
+sudo apt-get install cpanminus libffi-dev
+cpanm FFI::Platypus
+```
+
+### Running Examples
+
+```bash
+perl -Iperl/lib perl/examples/basic_usage.pl
+```
+
+### API
+
+```perl
+use Csvdb;
+
+print Csvdb::version(), "\n";
+
+# Convert between formats
+my $csvdb_path  = Csvdb::to_csvdb(input => "mydb.sqlite", force => 1);
+my $sqlite_path = Csvdb::to_sqlite(input => "mydb.csvdb", force => 1);
+my $duckdb_path = Csvdb::to_duckdb(input => "mydb.csvdb", force => 1);
+
+# Checksum
+my $hash = Csvdb::checksum(input => "mydb.csvdb");
+
+# SQL query (returns CSV text)
+my $csv = Csvdb::sql(path => "mydb.csvdb", query => "SELECT * FROM users");
+
+# Diff (returns 0=identical, 1=differences)
+my $rc = Csvdb::diff(left => "v1.csvdb", right => "v2.csvdb");
+
+# Validate (returns 0=valid, 1=errors)
+my $rc = Csvdb::validate(input => "mydb.csvdb");
+```
+
+### Running Tests
+
+```bash
+cargo build --release -p csvdb-ffi
+prove perl/t/
+```
+
 ## Project Structure
 
 ```
