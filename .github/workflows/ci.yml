@@ -19,19 +19,38 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: astral-sh/setup-uv@v4
+
       - name: Run Rust tests (core)
         run: cargo test --release -p csvdb ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
-      - name: Check FFI crate
-        run: cargo check -p csvdb-ffi
+      - name: Run FFI tests
+        run: cargo test --release -p csvdb-ffi ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
-      - name: Check Python crate
-        run: cargo check -p csvdb-python
+      - name: Run Python binding tests
+        working-directory: csvdb-python
+        run: |
+          uv sync
+          uv run maturin develop --release
+          uv run pytest
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
-      - uses: astral-sh/setup-uv@v4
 
       - name: Run functional tests
         run: uv run pytest
         working-directory: tests/functional
+
+      - name: Build FFI shared library
+        if: runner.os == 'Linux'
+        run: cargo build --release -p csvdb-ffi
+
+      - name: Install Perl dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cpanminus
+          sudo cpanm -n FFI::Platypus
+
+      - name: Run Perl tests
+        if: runner.os == 'Linux'
+        run: prove perl/t/
