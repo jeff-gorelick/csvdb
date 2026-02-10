@@ -487,32 +487,111 @@ ACTUAL=$(csvdb checksum data.sqlite)
 [ "$EXPECTED" = "$ACTUAL" ] || exit 1
 ```
 
+## Python Bindings
+
+csvdb provides native Python bindings via PyO3, giving you direct access to all csvdb functions without subprocess overhead.
+
+### Setup
+
+```bash
+cd csvdb-python
+uv sync
+uv run maturin develop --release
+```
+
+### Running Examples
+
+```bash
+cd csvdb-python
+
+# Basic usage: conversions, checksums, validation, queries, diffs
+uv run python examples/basic_usage.py
+
+# Advanced usage: format pipelines, change detection, incremental export,
+# schema init from raw CSVs, cross-format queries, error handling
+uv run python examples/advanced_usage.py
+```
+
+### API
+
+```python
+import csvdb_python as csvdb
+
+# Convert between formats
+csvdb.py_to_csvdb("mydb.sqlite", force=True)
+csvdb.py_to_sqlite("mydb.csvdb", force=True)
+csvdb.py_to_duckdb("mydb.csvdb", force=True)
+csvdb.py_to_parquetdb("mydb.csvdb", force=True)
+
+# Incremental export (only re-exports changed tables)
+result = csvdb.py_to_csvdb_incremental("mydb.sqlite")
+# result: {"path": "...", "added": [...], "updated": [...], "unchanged": [...], "removed": [...]}
+
+# Checksum (format-independent, deterministic)
+hash = csvdb.checksum_db("mydb.csvdb")
+
+# SQL queries (read-only, returns list of dicts)
+rows = csvdb.sql_query("mydb.csvdb", "SELECT name, COUNT(*) AS n FROM users GROUP BY name")
+
+# Diff two databases
+has_diff = csvdb.diff_db("v1.csvdb", "v2.csvdb")
+
+# Validate structure
+info = csvdb.validate_db("mydb.csvdb")
+
+# Initialize csvdb from raw CSV files
+result = csvdb.init_csvdb("./raw_csvs/")
+
+# Selective export
+csvdb.py_to_csvdb("mydb.sqlite", tables=["users", "orders"], force=True)
+csvdb.py_to_csvdb("mydb.sqlite", exclude=["logs"], force=True)
+```
+
+### Running Tests
+
+```bash
+cd csvdb-python
+uv run maturin develop --release
+uv run pytest
+```
+
 ## Project Structure
 
 ```
-src/
-  main.rs              # CLI (clap)
-  lib.rs
-  commands/
-    init.rs            # CSV files -> csvdb (schema inference)
-    to_csv.rs          # any format -> csvdb
-    to_sqlite.rs       # any format -> SQLite
-    to_duckdb.rs       # any format -> DuckDB
-    to_parquetdb.rs    # any format -> parquetdb (Parquet)
-    checksum.rs        # Format-independent checksums
-    validate.rs        # Structural integrity checks
-    diff.rs            # Compare two databases
-  core/
-    schema.rs          # Parse/emit schema.sql, type normalization
-    table.rs           # Row operations, PK handling
-    csv.rs             # Deterministic CSV I/O
-    input.rs           # Input format detection
-
-tests/
-  functional/
-    conftest.py        # Pytest fixtures
-    test_commands.py   # Functional tests
-    pyproject.toml     # Python dependencies (uv)
+csvdb/                    # Core library + CLI binary
+  src/
+    main.rs              # CLI (clap)
+    lib.rs
+    commands/
+      init.rs            # CSV files -> csvdb (schema inference)
+      to_csv.rs          # any format -> csvdb
+      to_sqlite.rs       # any format -> SQLite
+      to_duckdb.rs       # any format -> DuckDB
+      to_parquetdb.rs    # any format -> parquetdb (Parquet)
+      checksum.rs        # Format-independent checksums
+      validate.rs        # Structural integrity checks
+      diff.rs            # Compare two databases
+      sql.rs             # Read-only SQL queries
+    core/
+      schema.rs          # Parse/emit schema.sql, type normalization
+      table.rs           # Row operations, PK handling
+      csv.rs             # Deterministic CSV I/O
+      input.rs           # Input format detection
+csvdb-python/             # Python bindings (PyO3)
+  src/lib.rs
+  examples/
+    basic_usage.py
+    advanced_usage.py
+csvdb-ffi/                # C FFI for Perl and other languages
+  src/lib.rs
+perl/                     # Perl module (FFI::Platypus)
+  lib/Csvdb.pm
+  examples/basic_usage.pl
+tests/functional/         # Python functional tests
+  conftest.py
+  test_commands.py
+  test_performance.py
+  pyproject.toml
 ```
 
 ## Development
