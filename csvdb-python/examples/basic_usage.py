@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 """Basic usage examples for csvdb Python bindings.
 
-Setup:
-    cd csvdb-python
-    uv sync
-    uv run maturin develop --release
-
-Run:
-    uv run python examples/basic_usage.py
+Run from repo root:
+    cd csvdb-python && uv run maturin develop --release && uv run python examples/basic_usage.py
 """
 
 import tempfile
