@@ -40,17 +40,30 @@ jobs:
         run: uv run pytest
         working-directory: tests/functional
 
-      - name: Build FFI shared library
-        if: runner.os == 'Linux'
+      - name: Build FFI shared library (for Perl tests)
         run: cargo build --release -p csvdb-ffi
 
-      - name: Install Perl dependencies
+      - name: Install Perl dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y cpanminus
           sudo cpanm -n FFI::Platypus
 
+      - name: Install Perl dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cpanminus libffi
+          LDFLAGS="-L/opt/homebrew/opt/libffi/lib" \
+          CPPFLAGS="-I/opt/homebrew/opt/libffi/include" \
+          cpanm -n FFI::Platypus
+
+      - name: Install Perl dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cpanm -n Alien::FFI
+          cpanm -n -v FFI::Platypus || (for /R C:\Users\RUNNER~1\.cpanm\work /F %%f in (build.log) do type "%%f") && exit /b 1
+
       - name: Run Perl tests
-        if: runner.os == 'Linux'
         run: prove perl/t/

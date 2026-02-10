@@ -19,8 +19,10 @@ my $lib;
 for my $candidate (
     File::Spec->catfile($repo_root, 'target', 'release', 'libcsvdb_ffi.dylib'),
     File::Spec->catfile($repo_root, 'target', 'release', 'libcsvdb_ffi.so'),
+    File::Spec->catfile($repo_root, 'target', 'release', 'csvdb_ffi.dll'),
     File::Spec->catfile($repo_root, 'target', 'debug', 'libcsvdb_ffi.dylib'),
     File::Spec->catfile($repo_root, 'target', 'debug', 'libcsvdb_ffi.so'),
+    File::Spec->catfile($repo_root, 'target', 'debug', 'csvdb_ffi.dll'),
 ) {
     if (-f $candidate) {
         $lib = $candidate;
