@@ -58,6 +58,15 @@ impl InputFormat {
             );
         }
 
+        // Check if the path looks like a directory format but doesn't exist
+        let path_str = path.to_string_lossy();
+        if path_str.ends_with(".csvdb") || path_str.ends_with(".parquetdb") {
+            bail!(
+                "Path not found: {}",
+                path.display()
+            );
+        }
+
         // It's a file - check extension
         let ext = path
             .extension()
