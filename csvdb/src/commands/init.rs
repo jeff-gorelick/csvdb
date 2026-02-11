@@ -437,22 +437,31 @@ fn suggest_foreign_keys(tables: &[InferredTable]) -> Vec<(usize, Vec<SuggestedFo
 ///
 /// If `source_dir` contains CSV files, infers schema and creates schema.sql.
 /// If `source_dir` is a .csvdb directory, just validates/regenerates schema.
-pub fn init_csvdb(source_dir: &Path, config: &InferConfig) -> Result<InitResult> {
-    // Find all CSV files
-    let csv_files: Vec<PathBuf> = fs::read_dir(source_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("csv"))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if csv_files.is_empty() {
-        bail!("No CSV files found in {}", source_dir.display());
-    }
+pub fn init_csvdb(source: &Path, config: &InferConfig) -> Result<InitResult> {
+    // Accept a single CSV file or a directory of CSV files
+    let (source_dir, csv_files) = if source.is_file() {
+        let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !ext.eq_ignore_ascii_case("csv") {
+            bail!("Expected a .csv file, got: {}", source.display());
+        }
+        let dir = source.parent().unwrap_or(Path::new("."));
+        (dir.to_path_buf(), vec![source.to_path_buf()])
+    } else {
+        let files: Vec<PathBuf> = fs::read_dir(source)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.eq_ignore_ascii_case("csv"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if files.is_empty() {
+            bail!("No CSV files found in {}", source.display());
+        }
+        (source.to_path_buf(), files)
+    };
 
     // Infer schema for each CSV (parallel)
     let inferred: Vec<Result<InferredTable>> = csv_files
@@ -501,8 +510,12 @@ pub fn init_csvdb(source_dir: &Path, config: &InferConfig) -> Result<InitResult>
     // Determine output directory
     let output_dir = if source_dir.extension().and_then(|e| e.to_str()) == Some("csvdb") {
         source_dir.to_path_buf()
+    } else if source.is_file() {
+        // Single file: use file stem for .csvdb directory name
+        let stem = source.file_stem().and_then(|n| n.to_str()).unwrap_or("data");
+        source_dir.join(format!("{}.csvdb", stem))
     } else {
-        // Create .csvdb directory
+        // Directory: use directory name for .csvdb directory name
         let dir_name = source_dir
             .file_name()
             .and_then(|n| n.to_str())

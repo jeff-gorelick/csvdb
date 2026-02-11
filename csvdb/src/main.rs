@@ -25,7 +25,7 @@ struct Cli {
 enum Commands {
     /// Initialize a .csvdb directory from raw CSV files (infers schema)
     Init {
-        /// Directory containing CSV files
+        /// CSV file or directory containing CSV files
         source: PathBuf,
 
         /// Disable automatic primary key detection
