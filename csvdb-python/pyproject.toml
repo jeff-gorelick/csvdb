@@ -3,7 +3,7 @@ requires = ["maturin>=1,<2"]
 build-backend = "maturin"
 
 [project]
-name = "csvdb"
+name = "csvdb-tool"
 version = "0.2.0"
 requires-python = ">=3.8"
 
