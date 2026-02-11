@@ -323,7 +323,7 @@ fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-#[pymodule]
+#[pymodule(name = "csvdb")]
 fn csvdb_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_to_csvdb, m)?)?;
     m.add_function(wrap_pyfunction!(py_to_csvdb_incremental, m)?)?;

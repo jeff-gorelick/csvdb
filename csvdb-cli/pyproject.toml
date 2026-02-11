@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "csvdb-cli"
+version = "0.2.2"
+description = "Convert between SQLite/DuckDB databases and CSV directories"
+requires-python = ">=3.8"
+
+[tool.maturin]
+manifest-path = "../csvdb/Cargo.toml"
+bindings = "bin"
+strip = true
