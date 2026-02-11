@@ -50,14 +50,15 @@ def csvdb_bin():
 @pytest.fixture
 def run_csvdb(csvdb_bin):
     """Fixture providing a function to run csvdb commands."""
-    def _run(*args, check=True, capture=True):
+    def _run(*args, check=True, capture=True, cwd=None):
         cmd = [csvdb_bin] + list(args)
         result = subprocess.run(
             cmd,
             capture_output=capture,
             text=True,
             encoding="utf-8",
-            check=False
+            check=False,
+            cwd=cwd,
         )
         if check and result.returncode != 0:
             raise subprocess.CalledProcessError(

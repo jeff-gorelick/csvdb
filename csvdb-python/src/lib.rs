@@ -273,14 +273,16 @@ fn validate_db(
 /// Returns:
 ///     Dict with "output_dir", "tables" (list of table info dicts), and "warnings"
 #[pyfunction]
-#[pyo3(signature = (source, *, detect_pk=true))]
+#[pyo3(signature = (source, *, detect_pk=true, detect_fk=true))]
 fn init_csvdb(
     py: Python<'_>,
     source: &str,
     detect_pk: bool,
+    detect_fk: bool,
 ) -> PyResult<PyObject> {
     let config = init::InferConfig {
         detect_pk,
+        detect_fk,
         ..Default::default()
     };
 
@@ -296,6 +298,17 @@ fn init_csvdb(
         td.set_item("row_count", t.row_count)?;
         td.set_item("column_count", t.columns.len())?;
         td.set_item("suggested_pk", t.suggested_pk.as_deref())?;
+
+        let fks = PyList::empty(py);
+        for fk in &t.suggested_fks {
+            let fk_dict = PyDict::new(py);
+            fk_dict.set_item("column", &fk.column)?;
+            fk_dict.set_item("references_table", &fk.references_table)?;
+            fk_dict.set_item("references_column", &fk.references_column)?;
+            fks.append(fk_dict)?;
+        }
+        td.set_item("suggested_fks", fks)?;
+
         tables.append(td)?;
     }
 

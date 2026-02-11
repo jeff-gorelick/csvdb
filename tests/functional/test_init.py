@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 
 class TestInit:
     """Tests for the init command."""
@@ -446,3 +448,88 @@ class TestInitRichTypeInference:
         schema = (temp_dir / "bi_widen.csvdb" / "schema.sql").read_text()
         # value should be INTEGER (boolean + integer widens to integer)
         assert '"value" INTEGER' in schema
+
+
+class TestInitForeignKeys:
+    """Tests for foreign key inference during init."""
+
+    def test_init_fk_basic(self, run_csvdb, temp_dir):
+        """init should infer FK from user_id -> users.id."""
+        csv_dir = temp_dir / "fk_basic"
+        csv_dir.mkdir()
+        (csv_dir / "users.csv").write_text("id,name\n1,Alice\n2,Bob\n")
+        (csv_dir / "orders.csv").write_text("id,user_id,amount\n100,1,99.99\n101,2,49.50\n")
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "fk_basic.csvdb" / "schema.sql").read_text()
+        assert 'REFERENCES "users"("id")' in schema
+
+    def test_init_fk_plural_table(self, run_csvdb, temp_dir):
+        """init should infer FK from category_id -> categories.id."""
+        csv_dir = temp_dir / "fk_plural"
+        csv_dir.mkdir()
+        (csv_dir / "categories.csv").write_text("id,name\n1,Electronics\n2,Books\n")
+        (csv_dir / "products.csv").write_text("id,category_id,name\n1,1,Laptop\n2,2,Novel\n")
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "fk_plural.csvdb" / "schema.sql").read_text()
+        assert 'REFERENCES "categories"("id")' in schema
+
+    def test_init_fk_no_false_positive(self, run_csvdb, temp_dir):
+        """init should not infer FK when no matching table exists."""
+        csv_dir = temp_dir / "fk_no_match"
+        csv_dir.mkdir()
+        (csv_dir / "items.csv").write_text("id,widget_id,name\n1,42,Foo\n2,43,Bar\n")
+
+        run_csvdb("init", str(csv_dir))
+
+        schema = (temp_dir / "fk_no_match.csvdb" / "schema.sql").read_text()
+        assert "REFERENCES" not in schema
+
+    def test_init_no_fk_detection(self, run_csvdb, temp_dir):
+        """init --no-fk-detection should skip FK inference."""
+        csv_dir = temp_dir / "fk_disabled"
+        csv_dir.mkdir()
+        (csv_dir / "users.csv").write_text("id,name\n1,Alice\n2,Bob\n")
+        (csv_dir / "orders.csv").write_text("id,user_id,amount\n100,1,99.99\n101,2,49.50\n")
+
+        run_csvdb("init", "--no-fk-detection", str(csv_dir))
+
+        schema = (temp_dir / "fk_disabled.csvdb" / "schema.sql").read_text()
+        assert "REFERENCES" not in schema
+
+    def test_init_fk_roundtrip(self, run_csvdb, temp_dir):
+        """FK constraints should survive init -> to-sqlite roundtrip."""
+        csv_dir = temp_dir / "fk_roundtrip"
+        csv_dir.mkdir()
+        (csv_dir / "users.csv").write_text("id,name\n1,Alice\n2,Bob\n")
+        (csv_dir / "orders.csv").write_text("id,user_id,amount\n100,1,99.99\n101,2,49.50\n")
+
+        run_csvdb("init", str(csv_dir))
+        # Verify schema has users before orders (FK dependency order)
+        schema = (temp_dir / "fk_roundtrip.csvdb" / "schema.sql").read_text()
+        assert schema.index("users") < schema.index("orders")
+        result = run_csvdb("to-sqlite", "--force", str(temp_dir / "fk_roundtrip.csvdb"), check=False)
+        if result.returncode != 0:
+            pytest.fail(f"to-sqlite failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}")
+
+        conn = sqlite3.connect(temp_dir / "fk_roundtrip.sqlite")
+        # Check FK exists in sqlite_master
+        schema_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+        ).fetchone()[0]
+        conn.close()
+
+        assert "REFERENCES" in schema_sql
+
+    def test_init_fk_output_summary(self, run_csvdb, temp_dir):
+        """init should show FK count in summary output."""
+        csv_dir = temp_dir / "fk_summary"
+        csv_dir.mkdir()
+        (csv_dir / "users.csv").write_text("id,name\n1,Alice\n2,Bob\n")
+        (csv_dir / "orders.csv").write_text("id,user_id,amount\n100,1,99.99\n101,2,49.50\n")
+
+        result = run_csvdb("init", str(csv_dir))
+        assert "1 FK" in result.stdout

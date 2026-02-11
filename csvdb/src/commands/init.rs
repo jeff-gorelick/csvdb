@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+
+use rayon::prelude::*;
 
 use csv::ReaderBuilder;
 
@@ -67,6 +69,14 @@ pub struct InferredColumn {
     pub unique_values: Option<HashSet<String>>, // None if too many values to track
 }
 
+/// A suggested foreign key relationship.
+#[derive(Debug, Clone)]
+pub struct SuggestedForeignKey {
+    pub column: String,
+    pub references_table: String,
+    pub references_column: String,
+}
+
 /// Inferred table schema.
 #[derive(Debug, Clone)]
 pub struct InferredTable {
@@ -74,6 +84,7 @@ pub struct InferredTable {
     pub columns: Vec<InferredColumn>,
     pub row_count: usize,
     pub suggested_pk: Option<String>,
+    pub suggested_fks: Vec<SuggestedForeignKey>,
 }
 
 impl InferredTable {
@@ -90,6 +101,14 @@ impl InferredTable {
                 ddl.push_str(" PRIMARY KEY");
             } else if !col.nullable {
                 ddl.push_str(" NOT NULL");
+            }
+
+            // Add REFERENCES clause if this column has a suggested FK
+            if let Some(fk) = self.suggested_fks.iter().find(|fk| fk.column == col.name) {
+                ddl.push_str(&format!(
+                    " REFERENCES \"{}\"(\"{}\")",
+                    fk.references_table, fk.references_column
+                ));
             }
 
             if i < self.columns.len() - 1 {
@@ -112,6 +131,8 @@ pub struct InferConfig {
     pub sample_size: usize,
     /// Auto-detect primary key columns
     pub detect_pk: bool,
+    /// Auto-detect foreign key relationships
+    pub detect_fk: bool,
 }
 
 impl Default for InferConfig {
@@ -120,6 +141,7 @@ impl Default for InferConfig {
             max_unique_track: 100_000,
             sample_size: 0, // all rows
             detect_pk: true,
+            detect_fk: true,
         }
     }
 }
@@ -289,6 +311,7 @@ pub fn infer_table_schema(path: &Path, config: &InferConfig) -> Result<InferredT
         columns,
         row_count,
         suggested_pk,
+        suggested_fks: Vec::new(), // Populated later by suggest_foreign_keys()
     })
 }
 
@@ -335,6 +358,81 @@ fn suggest_primary_key(columns: &[InferredColumn], row_count: usize) -> Option<S
     None
 }
 
+/// Suggest foreign key relationships based on naming conventions.
+///
+/// Heuristics:
+/// - Column named `<table>_id` where `<table>` (singular or plural) matches another table name
+/// - Column named `<table>_id` where `<table>s` matches another table name (singular -> plural)
+/// - Only suggests FK if the referenced table has a matching PK column
+fn suggest_foreign_keys(tables: &[InferredTable]) -> Vec<(usize, Vec<SuggestedForeignKey>)> {
+    // Build lookup: table name -> (index, pk column name)
+    let mut table_lookup: HashMap<String, (usize, String)> = HashMap::new();
+    for (i, table) in tables.iter().enumerate() {
+        if let Some(ref pk) = table.suggested_pk {
+            // Map both the exact name and common variations
+            table_lookup.insert(
+                table.name.to_lowercase(),
+                (i, pk.clone()),
+            );
+        }
+    }
+
+    let mut results = Vec::new();
+
+    for (table_idx, table) in tables.iter().enumerate() {
+        let mut fks = Vec::new();
+
+        for col in &table.columns {
+            let col_lower = col.name.to_lowercase();
+
+            // Skip if this is the table's own PK
+            if table.suggested_pk.as_ref().map(|pk| pk.to_lowercase()) == Some(col_lower.clone()) {
+                continue;
+            }
+
+            // Pattern: column ends with "_id"
+            if let Some(prefix) = col_lower.strip_suffix("_id") {
+                if prefix.is_empty() {
+                    continue;
+                }
+
+                // Try matching against table names:
+                // 1. Exact match: user_id -> user (table)
+                // 2. Plural forms: user -> users, address -> addresses, category -> categories
+                let mut candidates = vec![
+                    prefix.to_string(),
+                    format!("{}s", prefix),     // user -> users
+                    format!("{}es", prefix),    // address -> addresses
+                ];
+                // Handle y -> ies: category -> categories
+                if prefix.ends_with('y') {
+                    candidates.push(format!("{}ies", &prefix[..prefix.len() - 1]));
+                }
+
+                for candidate in &candidates {
+                    if let Some((ref_idx, ref ref_pk)) = table_lookup.get(candidate.as_str()) {
+                        // Don't create self-referencing FKs from naming alone
+                        if *ref_idx != table_idx {
+                            fks.push(SuggestedForeignKey {
+                                column: col.name.clone(),
+                                references_table: tables[*ref_idx].name.clone(),
+                                references_column: ref_pk.clone(),
+                            });
+                            break; // Take first match
+                        }
+                    }
+                }
+            }
+        }
+
+        if !fks.is_empty() {
+            results.push((table_idx, fks));
+        }
+    }
+
+    results
+}
+
 /// Initialize a .csvdb directory from raw CSV files.
 ///
 /// If `source_dir` contains CSV files, infers schema and creates schema.sql.
@@ -356,25 +454,46 @@ pub fn init_csvdb(source_dir: &Path, config: &InferConfig) -> Result<InitResult>
         bail!("No CSV files found in {}", source_dir.display());
     }
 
-    // Infer schema for each CSV
+    // Infer schema for each CSV (parallel)
+    let inferred: Vec<Result<InferredTable>> = csv_files
+        .par_iter()
+        .map(|csv_path| infer_table_schema(csv_path, config))
+        .collect();
+
     let mut tables = Vec::new();
     let mut warnings = Vec::new();
 
-    for csv_path in &csv_files {
-        let table = infer_table_schema(csv_path, config)?;
-
+    for result in inferred {
+        let table = result?;
         if table.suggested_pk.is_none() {
             warnings.push(format!(
                 "Table '{}': no primary key detected. Consider adding one manually.",
                 table.name
             ));
         }
-
         tables.push(table);
     }
 
     // Sort tables by name for deterministic output
     tables.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Infer foreign keys across tables
+    if config.detect_fk {
+        let fk_suggestions = suggest_foreign_keys(&tables);
+        for (table_idx, fks) in fk_suggestions {
+            for fk in &fks {
+                warnings.push(format!(
+                    "Table '{}': inferred foreign key {}.{} -> {}.{}",
+                    tables[table_idx].name,
+                    tables[table_idx].name,
+                    fk.column,
+                    fk.references_table,
+                    fk.references_column,
+                ));
+            }
+            tables[table_idx].suggested_fks = fks;
+        }
+    }
 
     // Generate schema.sql
     let schema_sql = generate_schema_sql(&tables);
@@ -429,9 +548,12 @@ pub fn init_csvdb(source_dir: &Path, config: &InferConfig) -> Result<InitResult>
 
 /// Generate schema.sql content from inferred tables.
 fn generate_schema_sql(tables: &[InferredTable]) -> String {
-    let mut sql = String::new();
+    // Sort tables by FK dependency: referenced tables before referencing tables.
+    // This ensures schema.sql can be executed in order without FK errors.
+    let sorted = sort_tables_by_fk_dep(tables);
 
-    for (i, table) in tables.iter().enumerate() {
+    let mut sql = String::new();
+    for (i, table) in sorted.iter().enumerate() {
         if i > 0 {
             sql.push_str("\n");
         }
@@ -440,6 +562,62 @@ fn generate_schema_sql(tables: &[InferredTable]) -> String {
     }
 
     sql
+}
+
+/// Sort InferredTables so that FK-referenced tables come first (Kahn's algorithm).
+fn sort_tables_by_fk_dep(tables: &[InferredTable]) -> Vec<&InferredTable> {
+    if tables.len() <= 1 {
+        return tables.iter().collect();
+    }
+
+    let name_to_idx: HashMap<&str, usize> = tables
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.name.as_str(), i))
+        .collect();
+
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); tables.len()];
+    let mut in_degree: Vec<usize> = vec![0; tables.len()];
+
+    for (i, table) in tables.iter().enumerate() {
+        let mut deps: HashSet<usize> = HashSet::new();
+        for fk in &table.suggested_fks {
+            if let Some(&dep_idx) = name_to_idx.get(fk.references_table.as_str()) {
+                if dep_idx != i {
+                    deps.insert(dep_idx);
+                }
+            }
+        }
+        for dep_idx in deps {
+            dependents[dep_idx].push(i);
+            in_degree[i] += 1;
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<usize> = in_degree
+        .iter()
+        .enumerate()
+        .filter(|(_, &d)| d == 0)
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut sorted = Vec::with_capacity(tables.len());
+    while let Some(idx) = queue.pop_front() {
+        sorted.push(&tables[idx]);
+        for &dep in &dependents[idx] {
+            in_degree[dep] -= 1;
+            if in_degree[dep] == 0 {
+                queue.push_back(dep);
+            }
+        }
+    }
+
+    // If cycle detected, just return original order
+    if sorted.len() < tables.len() {
+        return tables.iter().collect();
+    }
+
+    sorted
 }
 
 /// Result of initializing a csvdb directory.
@@ -660,6 +838,7 @@ mod tests {
             ],
             row_count: 10,
             suggested_pk: Some("id".to_string()),
+            suggested_fks: Vec::new(),
         };
 
         let ddl = table.to_ddl();
@@ -667,6 +846,39 @@ mod tests {
         assert!(ddl.contains("\"id\" INTEGER PRIMARY KEY"));
         assert!(ddl.contains("\"name\" TEXT NOT NULL"));
         assert!(ddl.contains("\"email\" TEXT\n")); // nullable, no NOT NULL
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_ddl_with_fk() -> Result<()> {
+        let table = InferredTable {
+            name: "orders".to_string(),
+            columns: vec![
+                InferredColumn {
+                    name: "id".to_string(),
+                    col_type: InferredType::Integer,
+                    nullable: false,
+                    unique_values: None,
+                },
+                InferredColumn {
+                    name: "user_id".to_string(),
+                    col_type: InferredType::Integer,
+                    nullable: false,
+                    unique_values: None,
+                },
+            ],
+            row_count: 10,
+            suggested_pk: Some("id".to_string()),
+            suggested_fks: vec![SuggestedForeignKey {
+                column: "user_id".to_string(),
+                references_table: "users".to_string(),
+                references_column: "id".to_string(),
+            }],
+        };
+
+        let ddl = table.to_ddl();
+        assert!(ddl.contains("\"user_id\" INTEGER NOT NULL REFERENCES \"users\"(\"id\")"));
 
         Ok(())
     }
@@ -949,6 +1161,235 @@ mod tests {
 
         assert_eq!(table.row_count, 3);
         assert_eq!(table.columns[1].col_type, InferredType::Text);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_basic() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("fk_data");
+        fs::create_dir(&source)?;
+
+        let mut users = File::create(source.join("users.csv"))?;
+        writeln!(users, "id,name")?;
+        writeln!(users, "1,Alice")?;
+        writeln!(users, "2,Bob")?;
+
+        let mut orders = File::create(source.join("orders.csv"))?;
+        writeln!(orders, "id,user_id,amount")?;
+        writeln!(orders, "100,1,99.99")?;
+        writeln!(orders, "101,2,49.50")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        // orders.user_id should reference users.id
+        let orders_table = result.tables.iter().find(|t| t.name == "orders").unwrap();
+        assert_eq!(orders_table.suggested_fks.len(), 1);
+        assert_eq!(orders_table.suggested_fks[0].column, "user_id");
+        assert_eq!(orders_table.suggested_fks[0].references_table, "users");
+        assert_eq!(orders_table.suggested_fks[0].references_column, "id");
+
+        // users should have no FKs
+        let users_table = result.tables.iter().find(|t| t.name == "users").unwrap();
+        assert!(users_table.suggested_fks.is_empty());
+
+        // Check schema.sql contains REFERENCES
+        let schema = fs::read_to_string(result.output_dir.join("schema.sql"))?;
+        assert!(schema.contains("REFERENCES \"users\"(\"id\")"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_plural_table() -> Result<()> {
+        // Test: category_id -> categories (plural with -es suffix)
+        let dir = tempdir()?;
+        let source = dir.path().join("plural_data");
+        fs::create_dir(&source)?;
+
+        let mut categories = File::create(source.join("categories.csv"))?;
+        writeln!(categories, "id,name")?;
+        writeln!(categories, "1,Electronics")?;
+        writeln!(categories, "2,Books")?;
+
+        let mut products = File::create(source.join("products.csv"))?;
+        writeln!(products, "id,category_id,name")?;
+        writeln!(products, "1,1,Laptop")?;
+        writeln!(products, "2,2,Novel")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        let products_table = result.tables.iter().find(|t| t.name == "products").unwrap();
+        assert_eq!(products_table.suggested_fks.len(), 1);
+        assert_eq!(products_table.suggested_fks[0].column, "category_id");
+        assert_eq!(products_table.suggested_fks[0].references_table, "categories");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_no_match() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("no_fk_data");
+        fs::create_dir(&source)?;
+
+        let mut items = File::create(source.join("items.csv"))?;
+        writeln!(items, "id,name,widget_id")?;
+        writeln!(items, "1,Foo,42")?;
+        writeln!(items, "2,Bar,43")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        // widget_id doesn't match any table, so no FK
+        let items_table = result.tables.iter().find(|t| t.name == "items").unwrap();
+        assert!(items_table.suggested_fks.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_disabled() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("fk_disabled");
+        fs::create_dir(&source)?;
+
+        let mut users = File::create(source.join("users.csv"))?;
+        writeln!(users, "id,name")?;
+        writeln!(users, "1,Alice")?;
+
+        let mut orders = File::create(source.join("orders.csv"))?;
+        writeln!(orders, "id,user_id,amount")?;
+        writeln!(orders, "100,1,99.99")?;
+
+        let config = InferConfig {
+            detect_fk: false,
+            ..Default::default()
+        };
+        let result = init_csvdb(&source, &config)?;
+
+        // FK detection disabled - no FKs
+        let orders_table = result.tables.iter().find(|t| t.name == "orders").unwrap();
+        assert!(orders_table.suggested_fks.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_no_self_reference() -> Result<()> {
+        // A column like employee_id in an employees table should not self-reference
+        let dir = tempdir()?;
+        let source = dir.path().join("self_ref");
+        fs::create_dir(&source)?;
+
+        let mut employees = File::create(source.join("employees.csv"))?;
+        writeln!(employees, "id,name,employee_id")?;
+        writeln!(employees, "1,Alice,1")?;
+        writeln!(employees, "2,Bob,2")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        let emp_table = result.tables.iter().find(|t| t.name == "employees").unwrap();
+        // employee_id would match "employees" via plural heuristic, but self-ref is skipped
+        assert!(emp_table.suggested_fks.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_multiple_fks() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("multi_fk");
+        fs::create_dir(&source)?;
+
+        let mut users = File::create(source.join("users.csv"))?;
+        writeln!(users, "id,name")?;
+        writeln!(users, "1,Alice")?;
+        writeln!(users, "2,Bob")?;
+
+        let mut products = File::create(source.join("products.csv"))?;
+        writeln!(products, "id,name")?;
+        writeln!(products, "1,Widget")?;
+        writeln!(products, "2,Gadget")?;
+
+        let mut orders = File::create(source.join("orders.csv"))?;
+        writeln!(orders, "id,user_id,product_id,amount")?;
+        writeln!(orders, "100,1,1,99.99")?;
+        writeln!(orders, "101,2,2,49.50")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        let orders_table = result.tables.iter().find(|t| t.name == "orders").unwrap();
+        assert_eq!(orders_table.suggested_fks.len(), 2);
+
+        let fk_cols: Vec<&str> = orders_table
+            .suggested_fks
+            .iter()
+            .map(|fk| fk.column.as_str())
+            .collect();
+        assert!(fk_cols.contains(&"user_id"));
+        assert!(fk_cols.contains(&"product_id"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_requires_pk_on_target() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("no_pk_target");
+        fs::create_dir(&source)?;
+
+        // Table with all duplicates (no PK detectable)
+        let mut items = File::create(source.join("items.csv"))?;
+        writeln!(items, "name,value")?;
+        writeln!(items, "foo,1")?;
+        writeln!(items, "foo,1")?;
+
+        // Table referencing items
+        let mut refs = File::create(source.join("refs.csv"))?;
+        writeln!(refs, "id,item_id")?;
+        writeln!(refs, "1,1")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        // items has no PK, so item_id -> items should NOT be inferred
+        let items_table = result.tables.iter().find(|t| t.name == "items").unwrap();
+        assert!(items_table.suggested_pk.is_none());
+
+        let refs_table = result.tables.iter().find(|t| t.name == "refs").unwrap();
+        assert!(refs_table.suggested_fks.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fk_detection_warns() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("fk_warn");
+        fs::create_dir(&source)?;
+
+        let mut users = File::create(source.join("users.csv"))?;
+        writeln!(users, "id,name")?;
+        writeln!(users, "1,Alice")?;
+        writeln!(users, "2,Bob")?;
+
+        let mut orders = File::create(source.join("orders.csv"))?;
+        writeln!(orders, "id,user_id,amount")?;
+        writeln!(orders, "100,1,99.99")?;
+        writeln!(orders, "101,2,49.50")?;
+
+        let config = InferConfig::default();
+        let result = init_csvdb(&source, &config)?;
+
+        // Should have a warning about inferred FK
+        assert!(result.warnings.iter().any(|w| w.contains("inferred foreign key")));
+        assert!(result.warnings.iter().any(|w| w.contains("user_id") && w.contains("users.id")));
 
         Ok(())
     }

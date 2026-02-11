@@ -190,6 +190,25 @@ class TestInit:
         table = result["tables"][0]
         assert table["suggested_pk"] is None
 
+    def test_init_detects_foreign_keys(self, raw_csv_dir_with_fks):
+        result = csvdb_python.init_csvdb(str(raw_csv_dir_with_fks))
+        orders = next(t for t in result["tables"] if t["name"] == "orders")
+        assert len(orders["suggested_fks"]) == 1
+        fk = orders["suggested_fks"][0]
+        assert fk["column"] == "user_id"
+        assert fk["references_table"] == "users"
+        assert fk["references_column"] == "id"
+
+    def test_init_detect_fk_disabled(self, raw_csv_dir_with_fks):
+        result = csvdb_python.init_csvdb(str(raw_csv_dir_with_fks), detect_fk=False)
+        orders = next(t for t in result["tables"] if t["name"] == "orders")
+        assert len(orders["suggested_fks"]) == 0
+
+    def test_init_no_fk_without_matching_table(self, raw_csv_dir):
+        result = csvdb_python.init_csvdb(str(raw_csv_dir))
+        table = result["tables"][0]
+        assert len(table["suggested_fks"]) == 0
+
 
 class TestErrorHandling:
     def test_bad_path(self):

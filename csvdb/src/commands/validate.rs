@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use csv::ReaderBuilder;
 use flate2::read::GzDecoder;
+use rayon::prelude::*;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -63,9 +64,18 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
         table_count = schema.tables.len();
         view_count = schema.views.len();
 
-        // 2-4. Check each table's CSV file
-        for (table_name, table_schema) in &schema.tables {
-            let csv_path = match find_table_file(csvdb_dir, table_name) {
+        // 2-4. Check each table's CSV file (parallel validation)
+        let table_entries: Vec<_> = schema.tables.iter().collect();
+        let validation_results: Vec<_> = table_entries
+            .par_iter()
+            .map(|(table_name, table_schema)| {
+                let csv_path = find_table_file(csvdb_dir, table_name);
+                ((*table_name).clone(), csv_path.clone(), csv_path.map(|p| validate_csv(&p, table_schema)))
+            })
+            .collect();
+
+        for (table_name, csv_path, result) in validation_results {
+            let csv_path = match csv_path {
                 Some(p) => p,
                 None => {
                     let msg = format!("{}: missing CSV file", table_name);
@@ -77,8 +87,7 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
 
             let display_name = csv_path.file_name().unwrap_or_default().to_string_lossy();
 
-            // Try to read and validate
-            match validate_csv(&csv_path, table_schema) {
+            match result.unwrap() {
                 Ok(csv_result) => {
                     println!("  {} .............. OK ({} rows)", display_name, csv_result.row_count);
                     if !csv_result.duplicate_pks.is_empty() {
@@ -273,23 +282,32 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
         table_count = schema.tables.len();
         view_count = schema.views.len();
 
-        // 2. Check each table's Parquet file
-        for (table_name, table_schema) in &schema.tables {
-            let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+        // 2. Check each table's Parquet file (parallel validation)
+        let parquet_entries: Vec<_> = schema.tables.iter().collect();
+        let parquet_results: Vec<_> = parquet_entries
+            .par_iter()
+            .map(|(table_name, table_schema)| {
+                let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+                let result = if parquet_path.exists() {
+                    Some(validate_parquet(&parquet_path, table_schema))
+                } else {
+                    None
+                };
+                ((*table_name).clone(), result)
+            })
+            .collect();
 
-            if !parquet_path.exists() {
-                let msg = format!("{}: missing Parquet file", table_name);
-                println!("  {}.parquet .............. WARN: missing Parquet file", table_name);
-                warnings.push(msg);
-                continue;
-            }
-
-            // Try to read and validate using DuckDB
-            match validate_parquet(&parquet_path, table_schema) {
-                Ok(row_count) => {
+        for (table_name, result) in parquet_results {
+            match result {
+                None => {
+                    let msg = format!("{}: missing Parquet file", table_name);
+                    println!("  {}.parquet .............. WARN: missing Parquet file", table_name);
+                    warnings.push(msg);
+                }
+                Some(Ok(row_count)) => {
                     println!("  {}.parquet .............. OK ({} rows)", table_name, row_count);
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     let msg = format!("{}.parquet: {}", table_name, e);
                     println!("  {}.parquet .............. WARN: {}", table_name, e);
                     warnings.push(msg);

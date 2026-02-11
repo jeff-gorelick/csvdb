@@ -92,3 +92,24 @@ def raw_csv_dir(temp_dir):
     )
 
     return csv_dir
+
+
+@pytest.fixture
+def raw_csv_dir_with_fks(temp_dir):
+    """Create a directory with raw CSV files that have FK relationships."""
+    csv_dir = temp_dir / "raw_fk"
+    csv_dir.mkdir()
+
+    (csv_dir / "users.csv").write_text(
+        "id,name\n"
+        "1,Alice\n"
+        "2,Bob\n"
+    )
+
+    (csv_dir / "orders.csv").write_text(
+        "id,user_id,amount\n"
+        "100,1,99.99\n"
+        "101,2,49.50\n"
+    )
+
+    return csv_dir

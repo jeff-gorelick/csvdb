@@ -107,6 +107,9 @@ fn to_sqlite_via_cli(
     // Build sqlite3 commands
     let mut commands = String::new();
 
+    // Disable FK enforcement during import (some sqlite3 builds enable it by default)
+    commands.push_str("PRAGMA foreign_keys = OFF;\n");
+
     // Read and execute schema
     let abs_schema_path = schema_path.canonicalize()
         .with_context(|| format!("Failed to get absolute path: {}", schema_path.display()))?;
@@ -180,6 +183,9 @@ fn to_sqlite_via_rusqlite(
 ) -> Result<PathBuf> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to create database: {}", db_path.display()))?;
+
+    // Disable FK enforcement during import to avoid ordering issues
+    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
 
     // Create tables from schema
     let schema_sql = fs::read_to_string(schema_path)?;

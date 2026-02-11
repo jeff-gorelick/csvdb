@@ -1,5 +1,6 @@
 pub mod checksum;
 pub mod diff;
+pub mod hooks;
 pub mod init;
 pub mod sql;
 pub mod to_csv;

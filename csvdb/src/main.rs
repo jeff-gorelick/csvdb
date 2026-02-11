@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use csvdb::commands::{checksum, diff, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch};
+use csvdb::commands::{checksum, diff, hooks, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch};
 use csvdb::{CsvdbConfig, InputFormat, OrderMode, NullMode, TableFilter};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -31,6 +31,10 @@ enum Commands {
         /// Disable automatic primary key detection
         #[arg(long)]
         no_pk_detection: bool,
+
+        /// Disable automatic foreign key detection
+        #[arg(long)]
+        no_fk_detection: bool,
     },
 
     /// Convert SQLite/DuckDB to .csvdb directory (schema.sql + CSVs)
@@ -243,13 +247,31 @@ enum Commands {
         #[arg(long, value_delimiter = ',', conflicts_with = "tables")]
         exclude: Vec<String>,
     },
+
+    /// Install/uninstall git hooks for .csvdb directories
+    Hooks {
+        #[command(subcommand)]
+        action: HooksAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum HooksAction {
+    /// Install pre-commit and post-merge hooks
+    Install {
+        /// Overwrite existing hooks
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove csvdb git hooks
+    Uninstall,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { source, no_pk_detection } => run_init(&source, no_pk_detection),
+        Commands::Init { source, no_pk_detection, no_fk_detection } => run_init(&source, no_pk_detection, no_fk_detection),
         Commands::ToCsvdb { input, output, order, null_mode, natural_sort, order_by, compress, incremental, pipe, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
             let (order, null_mode, order_by) = resolve_config(&input, order, null_mode, order_by);
@@ -290,6 +312,7 @@ fn main() -> ExitCode {
             let (order, null_mode, order_by) = resolve_config(&path, order, null_mode, order_by);
             run_watch(&path, target, order, null_mode, order_by.as_deref(), debounce, &filter)
         }
+        Commands::Hooks { action } => run_hooks(action),
     };
 
     match result {
@@ -334,9 +357,10 @@ fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Opt
     (order, null_mode, order_by)
 }
 
-fn run_init(source: &PathBuf, no_pk_detection: bool) -> Result<ExitCode> {
+fn run_init(source: &PathBuf, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
     let config = init::InferConfig {
         detect_pk: !no_pk_detection,
+        detect_fk: !no_fk_detection,
         ..Default::default()
     };
 
@@ -355,12 +379,19 @@ fn run_init(source: &PathBuf, no_pk_detection: bool) -> Result<ExitCode> {
             Some(pk) => format!("PK: {}", pk),
             None => "no PK".to_string(),
         };
+        let fk_count = table.suggested_fks.len();
+        let fk_info = if fk_count > 0 {
+            format!(", {} FK{}", fk_count, if fk_count == 1 { "" } else { "s" })
+        } else {
+            String::new()
+        };
         println!(
-            "  {} ({} rows, {} columns, {})",
+            "  {} ({} rows, {} columns, {}{})",
             table.name,
             table.row_count,
             table.columns.len(),
-            pk_info
+            pk_info,
+            fk_info
         );
     }
 
@@ -510,5 +541,22 @@ fn run_sql(path: &PathBuf, query: &str, format: Option<sql::OutputFormat>) -> Re
 
 fn run_watch(path: &PathBuf, target: watch::WatchTarget, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, debounce: u64, filter: &TableFilter) -> Result<ExitCode> {
     watch::watch(path, target, order, null_mode, order_by, debounce, filter)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_hooks(action: HooksAction) -> Result<ExitCode> {
+    let cwd = std::env::current_dir()?;
+    match action {
+        HooksAction::Install { force } => {
+            if force {
+                hooks::install_force(&cwd)?;
+            } else {
+                hooks::install(&cwd)?;
+            }
+        }
+        HooksAction::Uninstall => {
+            hooks::uninstall(&cwd)?;
+        }
+    }
     Ok(ExitCode::SUCCESS)
 }
