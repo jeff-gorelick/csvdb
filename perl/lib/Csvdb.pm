@@ -48,14 +48,14 @@ $ffi->attach(csvdb_last_error  => []                              => 'string');
 $ffi->attach(csvdb_free_string => ['opaque']                      => 'void');
 
 $ffi->attach(csvdb_to_csvdb    => ['string','string','string','string','int'] => 'opaque');
-$ffi->attach(csvdb_to_sqlite   => ['string','int']               => 'opaque');
-$ffi->attach(csvdb_to_duckdb   => ['string','int']               => 'opaque');
+$ffi->attach(csvdb_to_sqlite   => ['string','string','int']       => 'opaque');
+$ffi->attach(csvdb_to_duckdb   => ['string','string','int']       => 'opaque');
 $ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int'] => 'opaque');
 $ffi->attach(csvdb_checksum    => ['string']                      => 'opaque');
 $ffi->attach(csvdb_diff        => ['string','string','int']       => 'int');
 $ffi->attach(csvdb_validate    => ['string']                      => 'int');
 $ffi->attach(csvdb_sql         => ['string','string']             => 'opaque');
-$ffi->attach(csvdb_init        => ['string']                      => 'opaque');
+$ffi->attach(csvdb_init        => ['string','string']              => 'opaque');
 
 # Helper: read and free a returned string, or die with last error
 sub _read_string {
@@ -87,16 +87,18 @@ sub to_csvdb {
 
 sub to_sqlite {
     my (%args) = @_;
-    my $input = $args{input} // croak "input is required";
-    my $force = $args{force} ? 1 : 0;
-    return _read_string(csvdb_to_sqlite($input, $force));
+    my $input  = $args{input}  // croak "input is required";
+    my $output = $args{output} // undef;
+    my $force  = $args{force}  ? 1 : 0;
+    return _read_string(csvdb_to_sqlite($input, $output, $force));
 }
 
 sub to_duckdb {
     my (%args) = @_;
-    my $input = $args{input} // croak "input is required";
-    my $force = $args{force} ? 1 : 0;
-    return _read_string(csvdb_to_duckdb($input, $force));
+    my $input  = $args{input}  // croak "input is required";
+    my $output = $args{output} // undef;
+    my $force  = $args{force}  ? 1 : 0;
+    return _read_string(csvdb_to_duckdb($input, $output, $force));
 }
 
 sub to_parquetdb {
@@ -149,7 +151,8 @@ sub sql {
 sub init {
     my (%args) = @_;
     my $source = $args{source} // croak "source is required";
-    return _read_string(csvdb_init($source));
+    my $output = $args{output} // undef;
+    return _read_string(csvdb_init($source, $output));
 }
 
 1;

@@ -10,7 +10,7 @@ use crate::core::{InputFormat, Schema};
 use crate::{NullMode, OrderMode, TableFilter};
 
 /// Convert any supported format to a DuckDB database.
-pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
     let input_format = InputFormat::from_path(input_path)?;
 
     // For non-csvdb formats, convert to csvdb first in a temp directory
@@ -37,21 +37,24 @@ pub fn to_duckdb(input_path: &Path, force: bool, filter: &TableFilter) -> Result
     let schema_path = csvdb_dir.join("schema.sql");
     let schema = Schema::from_schema_sql(&schema_path)?;
 
-    // Determine output path based on input
-    let stem = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("database");
-    let stem = stem
-        .strip_suffix(".csvdb")
-        .or_else(|| stem.strip_suffix(".parquetdb"))
-        .unwrap_or(stem);
-
-    let db_name = format!("{}.duckdb", stem);
-    let db_path = input_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(db_name);
+    // Determine output path
+    let db_path = if let Some(out) = output {
+        out.to_path_buf()
+    } else {
+        let stem = input_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("database");
+        let stem = stem
+            .strip_suffix(".csvdb")
+            .or_else(|| stem.strip_suffix(".parquetdb"))
+            .unwrap_or(stem);
+        let db_name = format!("{}.duckdb", stem);
+        input_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(db_name)
+    };
 
     // Check for existing database
     if db_path.exists() {
@@ -149,7 +152,7 @@ mod tests {
         let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Convert to DuckDB
-        let duckdb_path = to_duckdb(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
+        let duckdb_path = to_duckdb(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Verify data
         let conn = duckdb::Connection::open(&duckdb_path)?;
@@ -193,7 +196,7 @@ mod tests {
         let csvdb = to_csv(&original_db, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // CSV -> DuckDB
-        let duckdb_path = to_duckdb(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
+        let duckdb_path = to_duckdb(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Verify DuckDB data
         let duck_conn = duckdb::Connection::open(&duckdb_path)?;
@@ -205,7 +208,7 @@ mod tests {
         assert!((total - 124.99).abs() < 0.01);
 
         // CSV -> SQLite (verify both targets work from same CSV)
-        let sqlite_path = to_sqlite(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
+        let sqlite_path = to_sqlite(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
         let sqlite_conn = SqliteConnection::open(&sqlite_path)?;
         let sqlite_total: f64 = sqlite_conn.query_row(
             "SELECT SUM(amount) FROM orders WHERE customer = 'Alice'",
@@ -228,7 +231,7 @@ mod tests {
         )?;
         std::fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
-        let db_path = to_duckdb(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("foo.duckdb"));
         Ok(())
     }
@@ -244,7 +247,7 @@ mod tests {
         )?;
         std::fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
-        let db_path = to_duckdb(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         // Input "bar" (no .csvdb suffix) -> output "bar.duckdb"
         assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("bar.duckdb"));
         Ok(())
@@ -261,11 +264,11 @@ mod tests {
         )?;
         std::fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
-        let db_path = to_duckdb(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(db_path.exists());
 
         // Force overwrite should succeed
-        let db_path2 = to_duckdb(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path2 = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(db_path2.exists());
         Ok(())
     }
@@ -286,7 +289,7 @@ mod tests {
         }
 
         let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
-        let duckdb_path = to_duckdb(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
+        let duckdb_path = to_duckdb(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
 
         let conn = duckdb::Connection::open(&duckdb_path)?;
 

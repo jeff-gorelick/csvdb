@@ -408,11 +408,11 @@ mod tests {
         let csvdb_checksum = checksum(&csvdb, &TableFilter::new(vec![], vec![]))?;
 
         // Convert to DuckDB
-        let duckdb_path = to_duckdb::to_duckdb(&csvdb, true, &no_filter)?;
+        let duckdb_path = to_duckdb::to_duckdb(&csvdb, None, true, &no_filter)?;
         let duckdb_checksum = checksum(&duckdb_path, &TableFilter::new(vec![], vec![]))?;
 
         // Convert back to SQLite
-        let sqlite2_path = to_sqlite::to_sqlite(&csvdb, true, &no_filter)?;
+        let sqlite2_path = to_sqlite::to_sqlite(&csvdb, None, true, &no_filter)?;
         let sqlite2_checksum = checksum(&sqlite2_path, &TableFilter::new(vec![], vec![]))?;
 
         // All checksums should match

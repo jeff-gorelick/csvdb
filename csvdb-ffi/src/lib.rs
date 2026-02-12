@@ -92,6 +92,7 @@ pub unsafe extern "C" fn csvdb_to_csvdb(
 #[no_mangle]
 pub unsafe extern "C" fn csvdb_to_sqlite(
     input: *const c_char,
+    output: *const c_char,
     force: c_int,
 ) -> *mut c_char {
     clear_error();
@@ -99,9 +100,10 @@ pub unsafe extern "C" fn csvdb_to_sqlite(
         Some(s) => s,
         None => { set_error("input is null".into()); return ptr::null_mut(); }
     };
+    let output = unsafe { to_str(output) };
     let filter = TableFilter::new(vec![], vec![]);
 
-    match to_sqlite::to_sqlite(Path::new(input), force != 0, &filter) {
+    match to_sqlite::to_sqlite(Path::new(input), output.map(Path::new), force != 0, &filter) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
         Err(e) => { set_error(format!("{:#}", e)); ptr::null_mut() }
     }
@@ -113,6 +115,7 @@ pub unsafe extern "C" fn csvdb_to_sqlite(
 #[no_mangle]
 pub unsafe extern "C" fn csvdb_to_duckdb(
     input: *const c_char,
+    output: *const c_char,
     force: c_int,
 ) -> *mut c_char {
     clear_error();
@@ -120,9 +123,10 @@ pub unsafe extern "C" fn csvdb_to_duckdb(
         Some(s) => s,
         None => { set_error("input is null".into()); return ptr::null_mut(); }
     };
+    let output = unsafe { to_str(output) };
     let filter = TableFilter::new(vec![], vec![]);
 
-    match to_duckdb::to_duckdb(Path::new(input), force != 0, &filter) {
+    match to_duckdb::to_duckdb(Path::new(input), output.map(Path::new), force != 0, &filter) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
         Err(e) => { set_error(format!("{:#}", e)); ptr::null_mut() }
     }
@@ -277,15 +281,17 @@ pub unsafe extern "C" fn csvdb_sql(
 #[no_mangle]
 pub unsafe extern "C" fn csvdb_init(
     source: *const c_char,
+    output: *const c_char,
 ) -> *mut c_char {
     clear_error();
     let source = match unsafe { to_str(source) } {
         Some(s) => s,
         None => { set_error("source is null".into()); return ptr::null_mut(); }
     };
+    let output = unsafe { to_str(output) };
 
     let config = init::InferConfig::default();
-    match init::init_csvdb(Path::new(source), &config) {
+    match init::init_csvdb(Path::new(source), output.map(Path::new), &config) {
         Ok(result) => to_cstring(&result.output_dir.to_string_lossy()),
         Err(e) => { set_error(format!("{:#}", e)); ptr::null_mut() }
     }

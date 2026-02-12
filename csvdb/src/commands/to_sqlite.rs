@@ -11,7 +11,7 @@ use crate::core::{InputFormat, Schema};
 use crate::{NullMode, OrderMode, TableFilter};
 
 /// Convert any supported format to a SQLite database.
-pub fn to_sqlite(input_path: &Path, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+pub fn to_sqlite(input_path: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
     let input_format = InputFormat::from_path(input_path)?;
 
     // For non-csvdb formats, convert to csvdb first in a temp directory
@@ -38,21 +38,24 @@ pub fn to_sqlite(input_path: &Path, force: bool, filter: &TableFilter) -> Result
     let schema_path = csvdb_dir.join("schema.sql");
     let schema = Schema::from_schema_sql(&schema_path)?;
 
-    // Determine output path based on input
-    let stem = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("database");
-    let stem = stem
-        .strip_suffix(".csvdb")
-        .or_else(|| stem.strip_suffix(".parquetdb"))
-        .unwrap_or(stem);
-
-    let db_name = format!("{}.sqlite", stem);
-    let db_path = input_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(db_name);
+    // Determine output path
+    let db_path = if let Some(out) = output {
+        out.to_path_buf()
+    } else {
+        let stem = input_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("database");
+        let stem = stem
+            .strip_suffix(".csvdb")
+            .or_else(|| stem.strip_suffix(".parquetdb"))
+            .unwrap_or(stem);
+        let db_name = format!("{}.sqlite", stem);
+        input_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(db_name)
+    };
 
     // Check for existing database
     if db_path.exists() {
@@ -258,7 +261,7 @@ mod tests {
         fs::remove_file(&db_path)?;
 
         // Rebuild from CSV
-        let rebuilt_path = to_sqlite(&csvdb, true, &TableFilter::new(vec![], vec![]))?;
+        let rebuilt_path = to_sqlite(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Verify data
         let conn = Connection::open(&rebuilt_path)?;
@@ -286,7 +289,7 @@ mod tests {
         )?;
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
-        let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("foo.sqlite"));
         Ok(())
     }
@@ -302,7 +305,7 @@ mod tests {
         )?;
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
-        let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         // Input "bar" (no .csvdb suffix) -> output "bar.sqlite"
         assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("bar.sqlite"));
         Ok(())
@@ -320,11 +323,11 @@ mod tests {
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
         // First create
-        let db_path = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(db_path.exists());
 
         // Force overwrite should succeed
-        let db_path2 = to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        let db_path2 = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         assert!(db_path2.exists());
         Ok(())
     }
@@ -341,10 +344,10 @@ mod tests {
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
         // First create with force
-        to_sqlite(&csvdb_dir, true, &TableFilter::new(vec![], vec![]))?;
+        to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
 
         // Second create without force should fail
-        let result = to_sqlite(&csvdb_dir, false, &TableFilter::new(vec![], vec![]));
+        let result = to_sqlite(&csvdb_dir, None, false, &TableFilter::new(vec![], vec![]));
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("--force"));

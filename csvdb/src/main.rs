@@ -28,6 +28,10 @@ enum Commands {
         /// CSV file or directory containing CSV files
         source: PathBuf,
 
+        /// Output directory (default: <source>.csvdb)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
         /// Disable automatic primary key detection
         #[arg(long)]
         no_pk_detection: bool,
@@ -95,6 +99,10 @@ enum Commands {
         /// Path to input file or directory
         input: PathBuf,
 
+        /// Output file (default: <input>.sqlite)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
         /// Overwrite existing output file
         #[arg(long)]
         force: bool,
@@ -112,6 +120,10 @@ enum Commands {
     ToDuckdb {
         /// Path to input file or directory
         input: PathBuf,
+
+        /// Output file (default: <input>.duckdb)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
 
         /// Overwrite existing output file
         #[arg(long)]
@@ -271,7 +283,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { source, no_pk_detection, no_fk_detection } => run_init(&source, no_pk_detection, no_fk_detection),
+        Commands::Init { source, output, no_pk_detection, no_fk_detection } => run_init(&source, output.as_deref(), no_pk_detection, no_fk_detection),
         Commands::ToCsvdb { input, output, order, null_mode, natural_sort, order_by, compress, incremental, pipe, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
             let (order, null_mode, order_by) = resolve_config(&input, order, null_mode, order_by);
@@ -281,13 +293,13 @@ fn main() -> ExitCode {
                 run_to_csvdb(&input, output.as_deref(), order, null_mode, natural_sort, order_by.as_deref(), compress, pipe, force, &filter)
             }
         }
-        Commands::ToSqlite { input, force, tables, exclude } => {
+        Commands::ToSqlite { input, output, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
-            run_to_sqlite(&input, force, &filter)
+            run_to_sqlite(&input, output.as_deref(), force, &filter)
         }
-        Commands::ToDuckdb { input, force, tables, exclude } => {
+        Commands::ToDuckdb { input, output, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
-            run_to_duckdb(&input, force, &filter)
+            run_to_duckdb(&input, output.as_deref(), force, &filter)
         }
         Commands::ToParquetdb { input, output, order, null_mode, natural_sort: _, order_by, pipe, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
@@ -357,14 +369,14 @@ fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Opt
     (order, null_mode, order_by)
 }
 
-fn run_init(source: &PathBuf, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
+fn run_init(source: &PathBuf, output: Option<&Path>, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
     let config = init::InferConfig {
         detect_pk: !no_pk_detection,
         detect_fk: !no_fk_detection,
         ..Default::default()
     };
 
-    let result = init::init_csvdb(source, &config)?;
+    let result = init::init_csvdb(source, output, &config)?;
 
     // Print warnings
     for warning in &result.warnings {
@@ -475,14 +487,14 @@ fn run_to_csvdb_incremental(input: &PathBuf, output: Option<&Path>, order: Order
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_sqlite(csvdir: &PathBuf, force: bool, filter: &TableFilter) -> Result<ExitCode> {
-    let db_path = to_sqlite::to_sqlite(csvdir, force, filter)?;
+fn run_to_sqlite(csvdir: &PathBuf, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+    let db_path = to_sqlite::to_sqlite(csvdir, output, force, filter)?;
     println!("Created: {}", db_path.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_duckdb(csvdir: &PathBuf, force: bool, filter: &TableFilter) -> Result<ExitCode> {
-    let db_path = to_duckdb::to_duckdb(csvdir, force, filter)?;
+fn run_to_duckdb(csvdir: &PathBuf, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+    let db_path = to_duckdb::to_duckdb(csvdir, output, force, filter)?;
     println!("Created: {}", db_path.display());
     Ok(ExitCode::SUCCESS)
 }

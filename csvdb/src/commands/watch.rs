@@ -120,10 +120,10 @@ fn rebuild(
 ) -> Result<PathBuf> {
     match target {
         WatchTarget::Sqlite => {
-            crate::commands::to_sqlite::to_sqlite(path, true, filter)
+            crate::commands::to_sqlite::to_sqlite(path, None, true, filter)
         }
         WatchTarget::Duckdb => {
-            crate::commands::to_duckdb::to_duckdb(path, true, filter)
+            crate::commands::to_duckdb::to_duckdb(path, None, true, filter)
         }
         WatchTarget::Parquetdb => {
             crate::commands::to_parquetdb::to_parquetdb(

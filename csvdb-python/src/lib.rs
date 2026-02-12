@@ -127,15 +127,16 @@ fn py_to_csvdb_incremental(
 /// Returns:
 ///     Output database path as string
 #[pyfunction]
-#[pyo3(name = "to_sqlite", signature = (input, *, force=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_sqlite", signature = (input, *, output=None, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_sqlite(
     input: &str,
+    output: Option<&str>,
     force: bool,
     tables: Vec<String>,
     exclude: Vec<String>,
 ) -> PyResult<String> {
     let filter = TableFilter::new(tables, exclude);
-    let path = to_sqlite::to_sqlite(Path::new(input), force, &filter).map_err(to_py_err)?;
+    let path = to_sqlite::to_sqlite(Path::new(input), output.map(Path::new), force, &filter).map_err(to_py_err)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -144,15 +145,16 @@ fn py_to_sqlite(
 /// Returns:
 ///     Output database path as string
 #[pyfunction]
-#[pyo3(name = "to_duckdb", signature = (input, *, force=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_duckdb", signature = (input, *, output=None, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_duckdb(
     input: &str,
+    output: Option<&str>,
     force: bool,
     tables: Vec<String>,
     exclude: Vec<String>,
 ) -> PyResult<String> {
     let filter = TableFilter::new(tables, exclude);
-    let path = to_duckdb::to_duckdb(Path::new(input), force, &filter).map_err(to_py_err)?;
+    let path = to_duckdb::to_duckdb(Path::new(input), output.map(Path::new), force, &filter).map_err(to_py_err)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -273,10 +275,11 @@ fn validate_db(
 /// Returns:
 ///     Dict with "output_dir", "tables" (list of table info dicts), and "warnings"
 #[pyfunction]
-#[pyo3(name = "init", signature = (source, *, detect_pk=true, detect_fk=true))]
+#[pyo3(name = "init", signature = (source, *, output=None, detect_pk=true, detect_fk=true))]
 fn init_csvdb(
     py: Python<'_>,
     source: &str,
+    output: Option<&str>,
     detect_pk: bool,
     detect_fk: bool,
 ) -> PyResult<PyObject> {
@@ -286,7 +289,7 @@ fn init_csvdb(
         ..Default::default()
     };
 
-    let result = init::init_csvdb(Path::new(source), &config).map_err(to_py_err)?;
+    let result = init::init_csvdb(Path::new(source), output.map(Path::new), &config).map_err(to_py_err)?;
 
     let dict = PyDict::new(py);
     dict.set_item("output_dir", result.output_dir.to_string_lossy().into_owned())?;
