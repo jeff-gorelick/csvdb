@@ -46,7 +46,7 @@ fn parse_null_mode(s: &str) -> PyResult<NullMode> {
 /// Returns:
 ///     Output directory path as string
 #[pyfunction]
-#[pyo3(signature = (input, *, output=None, order="pk", null_mode="marker", natural_sort=false, order_by=None, compress=false, force=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_csvdb", signature = (input, *, output=None, order="pk", null_mode="marker", natural_sort=false, order_by=None, compress=false, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_csvdb(
     input: &str,
     output: Option<&str>,
@@ -85,7 +85,7 @@ fn py_to_csvdb(
 /// Returns:
 ///     Dict with "path", "unchanged", "updated", "added", "removed"
 #[pyfunction]
-#[pyo3(signature = (input, *, output=None, order="pk", null_mode="marker", natural_sort=false, order_by=None, compress=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_csvdb_incremental", signature = (input, *, output=None, order="pk", null_mode="marker", natural_sort=false, order_by=None, compress=false, tables=vec![], exclude=vec![]))]
 fn py_to_csvdb_incremental(
     py: Python<'_>,
     input: &str,
@@ -127,7 +127,7 @@ fn py_to_csvdb_incremental(
 /// Returns:
 ///     Output database path as string
 #[pyfunction]
-#[pyo3(signature = (input, *, force=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_sqlite", signature = (input, *, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_sqlite(
     input: &str,
     force: bool,
@@ -144,7 +144,7 @@ fn py_to_sqlite(
 /// Returns:
 ///     Output database path as string
 #[pyfunction]
-#[pyo3(signature = (input, *, force=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_duckdb", signature = (input, *, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_duckdb(
     input: &str,
     force: bool,
@@ -161,7 +161,7 @@ fn py_to_duckdb(
 /// Returns:
 ///     Output directory path as string
 #[pyfunction]
-#[pyo3(signature = (input, *, output=None, order="pk", null_mode="marker", order_by=None, force=false, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "to_parquetdb", signature = (input, *, output=None, order="pk", null_mode="marker", order_by=None, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_parquetdb(
     input: &str,
     output: Option<&str>,
@@ -195,7 +195,7 @@ fn py_to_parquetdb(
 ///     List of dicts, one per row, with column names as keys.
 ///     NULL values are represented as Python None.
 #[pyfunction]
-#[pyo3(signature = (path, query))]
+#[pyo3(name = "sql", signature = (path, query))]
 fn sql_query(
     py: Python<'_>,
     path: &str,
@@ -224,7 +224,7 @@ fn sql_query(
 /// Returns:
 ///     SHA256 hash as hex string
 #[pyfunction]
-#[pyo3(signature = (path, *, tables=vec![], exclude=vec![]))]
+#[pyo3(name = "checksum", signature = (path, *, tables=vec![], exclude=vec![]))]
 fn checksum_db(
     path: &str,
     tables: Vec<String>,
@@ -239,7 +239,7 @@ fn checksum_db(
 /// Returns:
 ///     True if differences found, False if identical
 #[pyfunction]
-#[pyo3(signature = (left, right, *, summary=false))]
+#[pyo3(name = "diff", signature = (left, right, *, summary=false))]
 fn diff_db(
     left: &str,
     right: &str,
@@ -253,7 +253,7 @@ fn diff_db(
 /// Returns:
 ///     Dict with "table_count", "view_count", "errors", and "warnings"
 #[pyfunction]
-#[pyo3(signature = (path,))]
+#[pyo3(name = "validate", signature = (path,))]
 fn validate_db(
     py: Python<'_>,
     path: &str,
@@ -273,7 +273,7 @@ fn validate_db(
 /// Returns:
 ///     Dict with "output_dir", "tables" (list of table info dicts), and "warnings"
 #[pyfunction]
-#[pyo3(signature = (source, *, detect_pk=true, detect_fk=true))]
+#[pyo3(name = "init", signature = (source, *, detect_pk=true, detect_fk=true))]
 fn init_csvdb(
     py: Python<'_>,
     source: &str,

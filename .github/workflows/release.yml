@@ -107,12 +107,12 @@ jobs:
           path: csvdb-python/dist/
 
   pypi-publish:
-    name: Publish csvdb-tool to PyPI
+    name: Publish csvdb-py to PyPI
     needs: [pypi-build, pypi-sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/csvdb-tool/
+      url: https://pypi.org/project/csvdb-py/
     permissions:
       id-token: write
     steps:

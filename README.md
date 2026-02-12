@@ -71,7 +71,14 @@ csvdb lets you store data as CSV (human-readable, git-friendly) and convert to S
 ## Installation
 
 ```bash
+# Rust (via cargo)
 cargo install csvdb
+
+# Python library (import csvdb)
+pip install csvdb-py
+
+# Standalone binary (via pip/pipx/uvx)
+uvx csvdb-cli
 ```
 
 ## Quick Start
@@ -97,16 +104,22 @@ csvdb to-parquetdb mydb.csvdb/
 ### init — Create csvdb from raw CSV files
 
 ```bash
+# From a directory of CSV files
 csvdb init ./raw_csvs/
+
+# From a single CSV file
+csvdb init data.csv
 ```
 
-Creates `raw_csvs.csvdb/` by:
+Creates a `.csvdb` directory by:
 - Inferring schema from CSV headers and data types
 - Detecting primary keys (columns named `id` or `<table>_id`)
+- Detecting foreign keys (columns like `user_id` referencing `users.id`)
 - Copying CSV files
 
 Options:
 - `--no-pk-detection` - Disable automatic primary key detection
+- `--no-fk-detection` - Disable automatic foreign key detection
 
 ### to-csvdb — Export database to csvdb
 
@@ -491,66 +504,52 @@ ACTUAL=$(csvdb checksum data.sqlite)
 
 csvdb provides native Python bindings via PyO3, giving you direct access to all csvdb functions without subprocess overhead.
 
-### Setup
+### Install
 
 ```bash
-cd csvdb-python
-uv sync
-uv run maturin develop --release
-```
-
-### Running Examples
-
-```bash
-cd csvdb-python
-
-# Basic usage: conversions, checksums, validation, queries, diffs
-uv run python examples/basic_usage.py
-
-# Advanced usage: format pipelines, change detection, incremental export,
-# schema init from raw CSVs, cross-format queries, error handling
-uv run python examples/advanced_usage.py
+pip install csvdb-py
 ```
 
 ### API
 
 ```python
-import csvdb_python as csvdb
+import csvdb
 
 # Convert between formats
-csvdb.py_to_csvdb("mydb.sqlite", force=True)
-csvdb.py_to_sqlite("mydb.csvdb", force=True)
-csvdb.py_to_duckdb("mydb.csvdb", force=True)
-csvdb.py_to_parquetdb("mydb.csvdb", force=True)
+csvdb.to_csvdb("mydb.sqlite", force=True)
+csvdb.to_sqlite("mydb.csvdb", force=True)
+csvdb.to_duckdb("mydb.csvdb", force=True)
+csvdb.to_parquetdb("mydb.csvdb", force=True)
 
 # Incremental export (only re-exports changed tables)
-result = csvdb.py_to_csvdb_incremental("mydb.sqlite")
+result = csvdb.to_csvdb_incremental("mydb.sqlite")
 # result: {"path": "...", "added": [...], "updated": [...], "unchanged": [...], "removed": [...]}
 
 # Checksum (format-independent, deterministic)
-hash = csvdb.checksum_db("mydb.csvdb")
+hash = csvdb.checksum("mydb.csvdb")
 
 # SQL queries (read-only, returns list of dicts)
-rows = csvdb.sql_query("mydb.csvdb", "SELECT name, COUNT(*) AS n FROM users GROUP BY name")
+rows = csvdb.sql("mydb.csvdb", "SELECT name, COUNT(*) AS n FROM users GROUP BY name")
 
 # Diff two databases
-has_diff = csvdb.diff_db("v1.csvdb", "v2.csvdb")
+has_diff = csvdb.diff("v1.csvdb", "v2.csvdb")
 
 # Validate structure
-info = csvdb.validate_db("mydb.csvdb")
+info = csvdb.validate("mydb.csvdb")
 
 # Initialize csvdb from raw CSV files
-result = csvdb.init_csvdb("./raw_csvs/")
+result = csvdb.init("./raw_csvs/")
 
 # Selective export
-csvdb.py_to_csvdb("mydb.sqlite", tables=["users", "orders"], force=True)
-csvdb.py_to_csvdb("mydb.sqlite", exclude=["logs"], force=True)
+csvdb.to_csvdb("mydb.sqlite", tables=["users", "orders"], force=True)
+csvdb.to_csvdb("mydb.sqlite", exclude=["logs"], force=True)
 ```
 
-### Running Tests
+### Development
 
 ```bash
 cd csvdb-python
+uv sync
 uv run maturin develop --release
 uv run pytest
 ```
@@ -656,13 +655,13 @@ tests/functional/         # Python functional tests
 ## Development
 
 ```bash
-cargo build
-cargo run -- init ./raw_csvs/
-cargo run -- to-csvdb mydb.sqlite
-cargo run -- to-sqlite mydb.csvdb/
-cargo run -- to-duckdb mydb.csvdb/
-cargo run -- to-parquetdb mydb.sqlite
-cargo run -- checksum mydb.sqlite
+cargo build -p csvdb
+cargo run -p csvdb -- init ./raw_csvs/
+cargo run -p csvdb -- to-csvdb mydb.sqlite
+cargo run -p csvdb -- to-sqlite mydb.csvdb/
+cargo run -p csvdb -- to-duckdb mydb.csvdb/
+cargo run -p csvdb -- to-parquetdb mydb.sqlite
+cargo run -p csvdb -- checksum mydb.sqlite
 ```
 
 ## Testing

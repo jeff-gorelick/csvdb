@@ -12,7 +12,7 @@ import tempfile
 import os
 import sqlite3
 
-import csvdb_python as csvdb
+import csvdb
 
 
 def create_multi_table_db(path):
@@ -99,9 +99,9 @@ def main():
         #   DuckDB:    fast analytical queries
         #   parquetdb: columnar storage, efficient compression
 
-        csvdb_path = csvdb.py_to_csvdb(db_path, force=True)
-        duckdb_path = csvdb.py_to_duckdb(csvdb_path, force=True)
-        parquet_path = csvdb.py_to_parquetdb(csvdb_path, force=True)
+        csvdb_path = csvdb.to_csvdb(db_path, force=True)
+        duckdb_path = csvdb.to_duckdb(csvdb_path, force=True)
+        parquet_path = csvdb.to_parquetdb(csvdb_path, force=True)
 
         print("Format pipeline complete:")
         print(f"  SQLite:    {os.path.basename(db_path)}")
@@ -113,7 +113,7 @@ def main():
         checksums = {}
         for label, path in [("csvdb", csvdb_path), ("DuckDB", duckdb_path),
                             ("Parquetdb", parquet_path), ("SQLite", db_path)]:
-            checksums[label] = csvdb.checksum_db(path)
+            checksums[label] = csvdb.checksum(path)
 
         all_match = len(set(checksums.values())) == 1
         print(f"\nChecksums {'match' if all_match else 'DIFFER'} across all formats")
@@ -136,7 +136,7 @@ def main():
 
         for label, path in [("csvdb", csvdb_path), ("DuckDB", duckdb_path),
                             ("Parquetdb", parquet_path)]:
-            rows = csvdb.sql_query(path, query)
+            rows = csvdb.sql(path, query)
             print(f"{label} results:")
             for row in rows:
                 print(f"  {row['dept']:15s}  {row['headcount']} people  "
@@ -155,22 +155,22 @@ def main():
         conn.commit()
         conn.close()
 
-        csvdb_v2 = csvdb.py_to_csvdb(
+        csvdb_v2 = csvdb.to_csvdb(
             db_path, output=os.path.join(tmpdir, "company_v2.csvdb"), force=True,
         )
 
-        has_diff = csvdb.diff_db(csvdb_path, csvdb_v2)
+        has_diff = csvdb.diff(csvdb_path, csvdb_v2)
         print(f"v1 vs v2: {'differences found' if has_diff else 'identical'}")
 
         # Show what changed via SQL
-        v1_count = csvdb.sql_query(csvdb_path, "SELECT COUNT(*) AS n FROM employees")
-        v2_count = csvdb.sql_query(csvdb_v2, "SELECT COUNT(*) AS n FROM employees")
+        v1_count = csvdb.sql(csvdb_path, "SELECT COUNT(*) AS n FROM employees")
+        v2_count = csvdb.sql(csvdb_v2, "SELECT COUNT(*) AS n FROM employees")
         print(f"  v1 employees: {v1_count[0]['n']}")
         print(f"  v2 employees: {v2_count[0]['n']}")
 
         # Checksum comparison
-        h1 = csvdb.checksum_db(csvdb_path)
-        h2 = csvdb.checksum_db(csvdb_v2)
+        h1 = csvdb.checksum(csvdb_path)
+        h2 = csvdb.checksum(csvdb_v2)
         print(f"  v1 checksum: {h1[:16]}...")
         print(f"  v2 checksum: {h2[:16]}...")
 
@@ -179,13 +179,13 @@ def main():
         # ---------------------------------------------------------
 
         # First export creates everything
-        result = csvdb.py_to_csvdb_incremental(db_path)
+        result = csvdb.to_csvdb_incremental(db_path)
         print(f"First incremental: path={os.path.basename(result['path'])}")
         print(f"  added={result['added']}, updated={result['updated']}, "
               f"unchanged={result['unchanged']}, removed={result['removed']}")
 
         # Second export with no changes - tables are unchanged
-        result = csvdb.py_to_csvdb_incremental(db_path)
+        result = csvdb.to_csvdb_incremental(db_path)
         print(f"\nSecond incremental (no changes):")
         print(f"  added={result['added']}, updated={result['updated']}, "
               f"unchanged={result['unchanged']}, removed={result['removed']}")
@@ -210,7 +210,7 @@ def main():
             f.write("2,1,4,Good value\n")
             f.write('3,2,3,"OK, but pricey"\n')
 
-        result = csvdb.init_csvdb(raw_dir)
+        result = csvdb.init(raw_dir)
         print(f"Initialized: {os.path.basename(result['output_dir'])}")
         for table in result["tables"]:
             print(f"  {table['name']}: {table['row_count']} rows, "
@@ -218,7 +218,7 @@ def main():
                   f"suggested PK: {table['suggested_pk']}")
 
         # Now we can query it
-        rows = csvdb.sql_query(
+        rows = csvdb.sql(
             result["output_dir"],
             "SELECT name, price FROM products WHERE in_stock = 'true' ORDER BY price",
         )
@@ -231,25 +231,25 @@ def main():
         # ---------------------------------------------------------
 
         # Export only specific tables
-        eng_db = csvdb.py_to_csvdb(
+        eng_db = csvdb.to_csvdb(
             db_path,
             output=os.path.join(tmpdir, "eng_only.csvdb"),
             tables=["departments", "employees"],
             force=True,
         )
-        info = csvdb.validate_db(eng_db)
+        info = csvdb.validate(eng_db)
         print(f"Selective export: {info['table_count']} tables")
-        rows = csvdb.sql_query(eng_db, "SELECT COUNT(*) AS n FROM employees")
+        rows = csvdb.sql(eng_db, "SELECT COUNT(*) AS n FROM employees")
         print(f"  employees: {rows[0]['n']}")
 
         # Export everything except projects
-        no_proj = csvdb.py_to_csvdb(
+        no_proj = csvdb.to_csvdb(
             db_path,
             output=os.path.join(tmpdir, "no_projects.csvdb"),
             exclude=["projects"],
             force=True,
         )
-        info = csvdb.validate_db(no_proj)
+        info = csvdb.validate(no_proj)
         print(f"\nExclude export: {info['table_count']} tables")
 
         # ---------------------------------------------------------
@@ -257,18 +257,18 @@ def main():
         # ---------------------------------------------------------
 
         # Validate a good directory
-        info = csvdb.validate_db(csvdb_path)
+        info = csvdb.validate(csvdb_path)
         print(f"Valid directory: {info['table_count']} tables, "
               f"{info['view_count']} views")
 
         # Demonstrate error handling
         try:
-            csvdb.sql_query(csvdb_path, "DROP TABLE employees")
+            csvdb.sql(csvdb_path, "DROP TABLE employees")
         except RuntimeError as e:
             print(f"\nBlocked write query: {e}")
 
         try:
-            csvdb.checksum_db("/nonexistent/path.csvdb")
+            csvdb.checksum("/nonexistent/path.csvdb")
         except RuntimeError as e:
             print(f"Bad path error: {e}")
 
