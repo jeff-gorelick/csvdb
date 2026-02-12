@@ -5,8 +5,15 @@ build-backend = "maturin"
 [project]
 name = "csvdb-cli"
 version = "0.2.4"
-description = "Convert between SQLite/DuckDB databases and CSV directories"
+description = "CLI tool to convert between SQLite, DuckDB, CSV, and Parquet"
 requires-python = ">=3.8"
+readme = "../README.md"
+license = "MIT"
+keywords = ["csv", "sqlite", "duckdb", "parquet", "database", "cli"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
 
 [tool.maturin]
 manifest-path = "../csvdb/Cargo.toml"
