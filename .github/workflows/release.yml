@@ -8,7 +8,12 @@ permissions:
   contents: write
 
 jobs:
+  ci:
+    name: Tests
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: [ci]
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -58,8 +63,9 @@ jobs:
         with:
           files: csvdb-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
 
-  # Build csvdb-tool (Python bindings) wheels
+  # Build csvdb-py (Python bindings) wheels
   pypi-build:
+    needs: [ci]
     name: Build Python wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -88,6 +94,7 @@ jobs:
           path: csvdb-python/dist/
 
   pypi-sdist:
+    needs: [ci]
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:
@@ -128,6 +135,7 @@ jobs:
 
   # Publish csvdb crate to crates.io
   crates-publish:
+    needs: [ci]
     name: Publish to crates.io
     runs-on: ubuntu-latest
     steps:
@@ -142,6 +150,7 @@ jobs:
 
   # Build csvdb-cli (standalone binary) wheels
   cli-build:
+    needs: [ci]
     name: Build CLI wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
