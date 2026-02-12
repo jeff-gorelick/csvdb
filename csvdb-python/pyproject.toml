@@ -7,7 +7,7 @@ name = "csvdb-py"
 version = "0.2.5"
 description = "Python bindings for csvdb: convert between SQLite, DuckDB, CSV, and Parquet"
 requires-python = ">=3.8"
-readme = "../README.md"
+readme = "README.md"
 license = "MIT"
 keywords = ["csv", "sqlite", "duckdb", "parquet", "database"]
 classifiers = [

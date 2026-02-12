@@ -7,7 +7,7 @@ name = "csvdb-cli"
 version = "0.2.5"
 description = "CLI tool to convert between SQLite, DuckDB, CSV, and Parquet"
 requires-python = ">=3.8"
-readme = "../README.md"
+readme = "README.md"
 license = "MIT"
 keywords = ["csv", "sqlite", "duckdb", "parquet", "database", "cli"]
 classifiers = [
