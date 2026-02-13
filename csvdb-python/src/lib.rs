@@ -241,13 +241,16 @@ fn checksum_db(
 /// Returns:
 ///     True if differences found, False if identical
 #[pyfunction]
-#[pyo3(name = "diff", signature = (left, right, *, summary=false))]
+#[pyo3(name = "diff", signature = (left, right, *, summary=false, tables=vec![], exclude=vec![]))]
 fn diff_db(
     left: &str,
     right: &str,
     summary: bool,
+    tables: Vec<String>,
+    exclude: Vec<String>,
 ) -> PyResult<bool> {
-    diff::diff(Path::new(left), Path::new(right), summary).map_err(to_py_err)
+    let filter = TableFilter::new(tables, exclude);
+    diff::diff(Path::new(left), Path::new(right), summary, &filter).map_err(to_py_err)
 }
 
 /// Validate a .csvdb or .parquetdb directory.
@@ -275,21 +278,25 @@ fn validate_db(
 /// Returns:
 ///     Dict with "output_dir", "tables" (list of table info dicts), and "warnings"
 #[pyfunction]
-#[pyo3(name = "init", signature = (source, *, output=None, detect_pk=true, detect_fk=true))]
+#[pyo3(name = "init", signature = (source, *, output=None, force=false, detect_pk=true, detect_fk=true, tables=vec![], exclude=vec![]))]
 fn init_csvdb(
     py: Python<'_>,
     source: &str,
     output: Option<&str>,
+    force: bool,
     detect_pk: bool,
     detect_fk: bool,
+    tables: Vec<String>,
+    exclude: Vec<String>,
 ) -> PyResult<PyObject> {
     let config = init::InferConfig {
         detect_pk,
         detect_fk,
         ..Default::default()
     };
+    let filter = TableFilter::new(tables, exclude);
 
-    let result = init::init_csvdb(Path::new(source), output.map(Path::new), &config).map_err(to_py_err)?;
+    let result = init::init_csvdb(Path::new(source), output.map(Path::new), force, &filter, &config).map_err(to_py_err)?;
 
     let dict = PyDict::new(py);
     dict.set_item("output_dir", result.output_dir.to_string_lossy().into_owned())?;

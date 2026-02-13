@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::core::{InputFormat, Schema, Table};
 use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::commands::checksum::normalize_value;
-use crate::{OrderMode, NullMode};
+use crate::{OrderMode, NullMode, TableFilter};
 
 /// Load tables from any supported format.
 /// Returns (Schema, map of table_name -> Table).
@@ -179,7 +179,7 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
 
 /// Compare two sources and print differences.
 /// Returns true if there are any differences.
-pub fn diff(left_path: &Path, right_path: &Path, summary: bool) -> Result<bool> {
+pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFilter) -> Result<bool> {
     let (left_schema, left_tables) = load_tables(left_path)
         .with_context(|| format!("Failed to load left: {}", left_path.display()))?;
     let (right_schema, right_tables) = load_tables(right_path)
@@ -203,6 +203,7 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool) -> Result<bool> 
         .collect();
     all_tables.sort();
     all_tables.dedup();
+    all_tables.retain(|t| filter.matches(t));
 
     for table_name in &all_tables {
         let in_left = left_tables.contains_key(table_name);
@@ -390,6 +391,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
+    use crate::TableFilter;
 
     /// Helper: create a minimal csvdb dir with one table.
     fn make_csvdb(base: &Path, name: &str, schema_sql: &str, csvs: &[(&str, &str)]) -> PathBuf {
@@ -412,7 +414,7 @@ mod tests {
         let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", csv)]);
         let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", csv)]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(!has_diff);
         Ok(())
     }
@@ -423,7 +425,7 @@ mod tests {
         let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
         let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n2,Bob\n")]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
         Ok(())
     }
@@ -434,7 +436,7 @@ mod tests {
         let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n2,Bob\n")]);
         let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
         Ok(())
     }
@@ -445,7 +447,7 @@ mod tests {
         let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
         let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alicia\n")]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
         Ok(())
     }
@@ -462,7 +464,7 @@ mod tests {
             ("t2", "id,val\n1,x\n"),
         ]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
         Ok(())
     }
@@ -475,7 +477,7 @@ mod tests {
         let left = make_csvdb(dir.path(), "a.csvdb", schema, &[("t", "id,price\n1,32\n2,24.5\n3,149\n")]);
         let right = make_csvdb(dir.path(), "b.csvdb", schema, &[("t", "id,price\n1,32.00\n2,24.50\n3,149.00\n")]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(!has_diff, "float formatting differences should be ignored");
         Ok(())
     }
@@ -488,7 +490,7 @@ mod tests {
         let left = make_csvdb(dir.path(), "a.csvdb", schema, &[("t", "id,price,category_id\n1,32,3\n")]);
         let right = make_csvdb(dir.path(), "b.csvdb", schema, &[("t", "id,price,category_id\n1,32.00,32\n")]);
 
-        let has_diff = diff(&left, &right, false)?;
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff, "real data change should be detected despite float noise");
         Ok(())
     }
@@ -500,7 +502,7 @@ mod tests {
         let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alicia\n2,Bob\n")]);
 
         // summary=true should not panic and should still detect differences
-        let has_diff = diff(&left, &right, true)?;
+        let has_diff = diff(&left, &right, true, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
         Ok(())
     }

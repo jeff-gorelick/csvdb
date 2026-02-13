@@ -52,10 +52,10 @@ $ffi->attach(csvdb_to_sqlite   => ['string','string','int']       => 'opaque');
 $ffi->attach(csvdb_to_duckdb   => ['string','string','int']       => 'opaque');
 $ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int'] => 'opaque');
 $ffi->attach(csvdb_checksum    => ['string']                      => 'opaque');
-$ffi->attach(csvdb_diff        => ['string','string','int']       => 'int');
+$ffi->attach(csvdb_diff        => ['string','string','int','string','string'] => 'int');
 $ffi->attach(csvdb_validate    => ['string']                      => 'int');
 $ffi->attach(csvdb_sql         => ['string','string']             => 'opaque');
-$ffi->attach(csvdb_init        => ['string','string']              => 'opaque');
+$ffi->attach(csvdb_init        => ['string','string','int','string','string'] => 'opaque');
 
 # Helper: read and free a returned string, or die with last error
 sub _read_string {
@@ -122,7 +122,9 @@ sub diff {
     my $left    = $args{left}    // croak "left is required";
     my $right   = $args{right}   // croak "right is required";
     my $summary = $args{summary} ? 1 : 0;
-    my $rc = csvdb_diff($left, $right, $summary);
+    my $tables  = $args{tables}  // undef;
+    my $exclude = $args{exclude} // undef;
+    my $rc = csvdb_diff($left, $right, $summary, $tables, $exclude);
     if ($rc == -1) {
         my $err = csvdb_last_error() // 'unknown error';
         croak "csvdb error: $err";
@@ -150,9 +152,12 @@ sub sql {
 
 sub init {
     my (%args) = @_;
-    my $source = $args{source} // croak "source is required";
-    my $output = $args{output} // undef;
-    return _read_string(csvdb_init($source, $output));
+    my $source  = $args{source}  // croak "source is required";
+    my $output  = $args{output}  // undef;
+    my $force   = $args{force}   ? 1 : 0;
+    my $tables  = $args{tables}  // undef;
+    my $exclude = $args{exclude} // undef;
+    return _read_string(csvdb_init($source, $output, $force, $tables, $exclude));
 }
 
 1;

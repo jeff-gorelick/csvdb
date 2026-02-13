@@ -39,6 +39,16 @@ fn parse_order(s: Option<&str>) -> OrderMode {
     }
 }
 
+fn parse_filter(tables: Option<&str>, exclude: Option<&str>) -> TableFilter {
+    let tables = tables
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+        .unwrap_or_default();
+    let exclude = exclude
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+        .unwrap_or_default();
+    TableFilter::new(tables, exclude)
+}
+
 fn parse_null_mode(s: Option<&str>) -> NullMode {
     match s {
         Some("marker") | None => NullMode::Marker,
@@ -190,11 +200,14 @@ pub unsafe extern "C" fn csvdb_checksum(
 /// Compare two databases or .csvdb directories.
 ///
 /// Returns 1 if differences found, 0 if identical, -1 on error.
+/// `tables` and `exclude` are optional comma-separated table names (pass NULL for none).
 #[no_mangle]
 pub unsafe extern "C" fn csvdb_diff(
     left: *const c_char,
     right: *const c_char,
     summary: c_int,
+    tables: *const c_char,
+    exclude: *const c_char,
 ) -> c_int {
     clear_error();
     let left = match unsafe { to_str(left) } {
@@ -205,8 +218,9 @@ pub unsafe extern "C" fn csvdb_diff(
         Some(s) => s,
         None => { set_error("right is null".into()); return -1; }
     };
+    let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
-    match diff::diff(Path::new(left), Path::new(right), summary != 0) {
+    match diff::diff(Path::new(left), Path::new(right), summary != 0, &filter) {
         Ok(has_diff) => if has_diff { 1 } else { 0 },
         Err(e) => { set_error(format!("{:#}", e)); -1 }
     }
@@ -278,10 +292,14 @@ pub unsafe extern "C" fn csvdb_sql(
 /// Initialize a .csvdb directory from raw CSV files.
 ///
 /// Returns the output directory path on success, or NULL on error.
+/// `tables` and `exclude` are optional comma-separated table names (pass NULL for none).
 #[no_mangle]
 pub unsafe extern "C" fn csvdb_init(
     source: *const c_char,
     output: *const c_char,
+    force: c_int,
+    tables: *const c_char,
+    exclude: *const c_char,
 ) -> *mut c_char {
     clear_error();
     let source = match unsafe { to_str(source) } {
@@ -289,9 +307,10 @@ pub unsafe extern "C" fn csvdb_init(
         None => { set_error("source is null".into()); return ptr::null_mut(); }
     };
     let output = unsafe { to_str(output) };
+    let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
     let config = init::InferConfig::default();
-    match init::init_csvdb(Path::new(source), output.map(Path::new), &config) {
+    match init::init_csvdb(Path::new(source), output.map(Path::new), force != 0, &filter, &config) {
         Ok(result) => to_cstring(&result.output_dir.to_string_lossy()),
         Err(e) => { set_error(format!("{:#}", e)); ptr::null_mut() }
     }

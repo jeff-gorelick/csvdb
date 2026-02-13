@@ -32,6 +32,10 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
+        /// Overwrite existing output directory
+        #[arg(long)]
+        force: bool,
+
         /// Disable automatic primary key detection
         #[arg(long)]
         no_pk_detection: bool,
@@ -39,6 +43,14 @@ enum Commands {
         /// Disable automatic foreign key detection
         #[arg(long)]
         no_fk_detection: bool,
+
+        /// Only include these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "exclude")]
+        tables: Vec<String>,
+
+        /// Exclude these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "tables")]
+        exclude: Vec<String>,
     },
 
     /// Convert SQLite/DuckDB to .csvdb directory (schema.sql + CSVs)
@@ -197,6 +209,14 @@ enum Commands {
         /// Only show summary counts, not individual rows
         #[arg(long)]
         summary: bool,
+
+        /// Only include these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "exclude")]
+        tables: Vec<String>,
+
+        /// Exclude these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "tables")]
+        exclude: Vec<String>,
     },
 
     /// Compute checksum of database or csvdb directory
@@ -283,7 +303,10 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { source, output, no_pk_detection, no_fk_detection } => run_init(&source, output.as_deref(), no_pk_detection, no_fk_detection),
+        Commands::Init { source, output, force, no_pk_detection, no_fk_detection, tables, exclude } => {
+            let filter = TableFilter::new(tables, exclude);
+            run_init(&source, output.as_deref(), force, &filter, no_pk_detection, no_fk_detection)
+        }
         Commands::ToCsvdb { input, output, order, null_mode, natural_sort, order_by, compress, incremental, pipe, force, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
             let (order, null_mode, order_by) = resolve_config(&input, order, null_mode, order_by);
@@ -307,7 +330,10 @@ fn main() -> ExitCode {
             run_to_parquetdb(&input, output.as_deref(), order, null_mode, order_by.as_deref(), pipe, force, &filter)
         }
         Commands::Validate { path } => run_validate(&path),
-        Commands::Diff { left, right, summary } => run_diff(&left, &right, summary),
+        Commands::Diff { left, right, summary, tables, exclude } => {
+            let filter = TableFilter::new(tables, exclude);
+            run_diff(&left, &right, summary, &filter)
+        }
         Commands::Checksum { path, tables, exclude } => {
             let filter = TableFilter::new(tables, exclude);
             run_checksum(&path, &filter)
@@ -369,14 +395,14 @@ fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Opt
     (order, null_mode, order_by)
 }
 
-fn run_init(source: &PathBuf, output: Option<&Path>, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
+fn run_init(source: &PathBuf, output: Option<&Path>, force: bool, filter: &TableFilter, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
     let config = init::InferConfig {
         detect_pk: !no_pk_detection,
         detect_fk: !no_fk_detection,
         ..Default::default()
     };
 
-    let result = init::init_csvdb(source, output, &config)?;
+    let result = init::init_csvdb(source, output, force, filter, &config)?;
 
     // Print warnings
     for warning in &result.warnings {
@@ -531,8 +557,8 @@ fn run_validate(path: &PathBuf) -> Result<ExitCode> {
     }
 }
 
-fn run_diff(left: &PathBuf, right: &PathBuf, summary: bool) -> Result<ExitCode> {
-    let has_differences = diff::diff(left, right, summary)?;
+fn run_diff(left: &PathBuf, right: &PathBuf, summary: bool, filter: &TableFilter) -> Result<ExitCode> {
+    let has_differences = diff::diff(left, right, summary, filter)?;
     if has_differences {
         Ok(ExitCode::from(1))
     } else {

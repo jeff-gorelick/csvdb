@@ -8,6 +8,7 @@ use rayon::prelude::*;
 use csv::ReaderBuilder;
 
 use crate::core::config::{CsvdbConfig, CURRENT_FORMAT_VERSION, created_by_string};
+use crate::TableFilter;
 
 /// Inferred column type from CSV data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -437,7 +438,7 @@ fn suggest_foreign_keys(tables: &[InferredTable]) -> Vec<(usize, Vec<SuggestedFo
 ///
 /// If `source_dir` contains CSV files, infers schema and creates schema.sql.
 /// If `source_dir` is a .csvdb directory, just validates/regenerates schema.
-pub fn init_csvdb(source: &Path, output: Option<&Path>, config: &InferConfig) -> Result<InitResult> {
+pub fn init_csvdb(source: &Path, output: Option<&Path>, force: bool, filter: &TableFilter, config: &InferConfig) -> Result<InitResult> {
     // Accept a single CSV file or a directory of CSV files
     let (source_dir, csv_files) = if source.is_file() {
         let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -462,6 +463,18 @@ pub fn init_csvdb(source: &Path, output: Option<&Path>, config: &InferConfig) ->
         }
         (source.to_path_buf(), files)
     };
+
+    // Filter CSV files by table name
+    let csv_files: Vec<PathBuf> = csv_files
+        .into_iter()
+        .filter(|p| {
+            let table_name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            filter.matches(table_name)
+        })
+        .collect();
+    if csv_files.is_empty() {
+        bail!("No CSV files match the specified table filter");
+    }
 
     // Infer schema for each CSV (parallel)
     let inferred: Vec<Result<InferredTable>> = csv_files
@@ -524,6 +537,16 @@ pub fn init_csvdb(source: &Path, output: Option<&Path>, config: &InferConfig) ->
             .unwrap_or("data");
         source_dir.parent().unwrap_or(Path::new(".")).join(format!("{}.csvdb", dir_name))
     };
+
+    // Check for existing output (skip when writing back into source)
+    if output_dir.exists() && output_dir != source_dir {
+        if !force {
+            bail!(
+                "Output directory already exists: {}\nUse --force to overwrite.",
+                output_dir.display()
+            );
+        }
+    }
 
     // Create directory if needed
     if !output_dir.exists() {
@@ -916,7 +939,7 @@ mod tests {
         writeln!(orders, "101,2,49.50")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // Check output
         assert!(result.output_dir.to_string_lossy().ends_with(".csvdb"));
@@ -961,7 +984,7 @@ mod tests {
         fs::create_dir(&source)?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config);
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config);
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -981,7 +1004,7 @@ mod tests {
         writeln!(file, "1,hello")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // Check csvdb.toml was created
         let toml_path = result.output_dir.join("csvdb.toml");
@@ -1006,7 +1029,7 @@ mod tests {
         writeln!(file, "1,Alice")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&csvdb_dir, None, &config)?;
+        let result = init_csvdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // Should write schema in same directory (not create nested .csvdb)
         assert_eq!(result.output_dir, csvdb_dir);
@@ -1151,7 +1174,7 @@ mod tests {
         writeln!(file, "2024-01-01,event1")?;  // completely duplicate row
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // Should have a warning about no PK
         assert!(!result.warnings.is_empty());
@@ -1197,7 +1220,7 @@ mod tests {
         writeln!(orders, "101,2,49.50")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // orders.user_id should reference users.id
         let orders_table = result.tables.iter().find(|t| t.name == "orders").unwrap();
@@ -1235,7 +1258,7 @@ mod tests {
         writeln!(products, "2,2,Novel")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         let products_table = result.tables.iter().find(|t| t.name == "products").unwrap();
         assert_eq!(products_table.suggested_fks.len(), 1);
@@ -1257,7 +1280,7 @@ mod tests {
         writeln!(items, "2,Bar,43")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // widget_id doesn't match any table, so no FK
         let items_table = result.tables.iter().find(|t| t.name == "items").unwrap();
@@ -1284,7 +1307,7 @@ mod tests {
             detect_fk: false,
             ..Default::default()
         };
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // FK detection disabled - no FKs
         let orders_table = result.tables.iter().find(|t| t.name == "orders").unwrap();
@@ -1306,7 +1329,7 @@ mod tests {
         writeln!(employees, "2,Bob,2")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         let emp_table = result.tables.iter().find(|t| t.name == "employees").unwrap();
         // employee_id would match "employees" via plural heuristic, but self-ref is skipped
@@ -1337,7 +1360,7 @@ mod tests {
         writeln!(orders, "101,2,2,49.50")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         let orders_table = result.tables.iter().find(|t| t.name == "orders").unwrap();
         assert_eq!(orders_table.suggested_fks.len(), 2);
@@ -1371,7 +1394,7 @@ mod tests {
         writeln!(refs, "1,1")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // items has no PK, so item_id -> items should NOT be inferred
         let items_table = result.tables.iter().find(|t| t.name == "items").unwrap();
@@ -1400,7 +1423,7 @@ mod tests {
         writeln!(orders, "101,2,49.50")?;
 
         let config = InferConfig::default();
-        let result = init_csvdb(&source, None, &config)?;
+        let result = init_csvdb(&source, None, true, &TableFilter::new(vec![], vec![]), &config)?;
 
         // Should have a warning about inferred FK
         assert!(result.warnings.iter().any(|w| w.contains("inferred foreign key")));
