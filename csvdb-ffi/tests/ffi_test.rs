@@ -127,7 +127,7 @@ fn test_to_sqlite() {
     let csvdb_dir = make_test_csvdb(dir.path());
     let input = c(csvdb_dir.to_str().unwrap());
 
-    let path = unsafe { read_and_free(csvdb_to_sqlite(input.as_ptr(), 1)) };
+    let path = unsafe { read_and_free(csvdb_to_sqlite(input.as_ptr(), ptr::null(), 1)) };
     assert!(path.ends_with(".sqlite"), "unexpected path: {}", path);
     assert!(std::path::Path::new(&path).exists());
 }
@@ -138,7 +138,7 @@ fn test_to_duckdb() {
     let csvdb_dir = make_test_csvdb(dir.path());
     let input = c(csvdb_dir.to_str().unwrap());
 
-    let path = unsafe { read_and_free(csvdb_to_duckdb(input.as_ptr(), 1)) };
+    let path = unsafe { read_and_free(csvdb_to_duckdb(input.as_ptr(), ptr::null(), 1)) };
     assert!(path.ends_with(".duckdb"), "unexpected path: {}", path);
     assert!(std::path::Path::new(&path).exists());
 }
@@ -218,7 +218,7 @@ fn test_diff_identical() {
     let csvdb_dir = make_test_csvdb(dir.path());
     let input = c(csvdb_dir.to_str().unwrap());
 
-    let rc = unsafe { csvdb_diff(input.as_ptr(), input.as_ptr(), 0) };
+    let rc = unsafe { csvdb_diff(input.as_ptr(), input.as_ptr(), 0, ptr::null(), ptr::null()) };
     assert_eq!(rc, 0, "expected no diff (0), got {}", rc);
 }
 
@@ -240,7 +240,7 @@ fn test_diff_different() {
     let left = c(dir1.to_str().unwrap());
     let right = c(dir2.to_str().unwrap());
 
-    let rc = unsafe { csvdb_diff(left.as_ptr(), right.as_ptr(), 1) };
+    let rc = unsafe { csvdb_diff(left.as_ptr(), right.as_ptr(), 1, ptr::null(), ptr::null()) };
     assert_eq!(rc, 1, "expected diff (1), got {}", rc);
 }
 
@@ -255,7 +255,7 @@ fn test_init() {
     ).unwrap();
 
     let source = c(csv_dir.to_str().unwrap());
-    let path = unsafe { read_and_free(csvdb_init(source.as_ptr())) };
+    let path = unsafe { read_and_free(csvdb_init(source.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null())) };
     assert!(path.ends_with(".csvdb"), "unexpected path: {}", path);
     assert!(std::path::Path::new(&path).join("schema.sql").exists());
 }
@@ -270,7 +270,7 @@ fn test_checksum_consistency() {
     let csvdb_hash = unsafe { read_and_free(csvdb_checksum(csvdb_input.as_ptr())) };
 
     // Convert to SQLite, checksum should match
-    let sqlite_path = unsafe { read_and_free(csvdb_to_sqlite(csvdb_input.as_ptr(), 1)) };
+    let sqlite_path = unsafe { read_and_free(csvdb_to_sqlite(csvdb_input.as_ptr(), ptr::null(), 1)) };
     let sqlite_input = c(&sqlite_path);
     let sqlite_hash = unsafe { read_and_free(csvdb_checksum(sqlite_input.as_ptr())) };
 
