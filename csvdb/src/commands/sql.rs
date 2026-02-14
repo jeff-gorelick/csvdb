@@ -91,6 +91,34 @@ fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool
     Ok((QueryResult { column_names, rows, null_flags }, numeric_cols))
 }
 
+/// Execute a read-only SQL query and return Arrow RecordBatches directly.
+pub fn sql_query_arrow(path: &Path, query: &str) -> Result<Vec<arrow::record_batch::RecordBatch>> {
+    let trimmed = query.trim();
+    let upper = trimmed.to_uppercase();
+    let first_word = upper.split_whitespace().next().unwrap_or("");
+    if first_word != "SELECT" && first_word != "WITH" {
+        bail!("Only SELECT queries are supported. Got: {}", first_word);
+    }
+
+    let input_format = InputFormat::from_path(path)?;
+
+    let conn = Connection::open_in_memory()
+        .context("Failed to create in-memory DuckDB connection")?;
+
+    load_data(&conn, path, input_format)?;
+
+    let mut stmt = conn
+        .prepare(trimmed)
+        .with_context(|| format!("Failed to prepare query: {}", trimmed))?;
+
+    let arrow = stmt
+        .query_arrow([])
+        .context("Failed to execute query")?;
+
+    let batches: Vec<arrow::record_batch::RecordBatch> = arrow.collect();
+    Ok(batches)
+}
+
 pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()> {
     let (result, numeric_cols) = sql_query_internal(path, query)?;
 
@@ -111,7 +139,7 @@ pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()>
     Ok(())
 }
 
-fn load_data(conn: &Connection, path: &Path, format: InputFormat) -> Result<()> {
+pub(crate) fn load_data(conn: &Connection, path: &Path, format: InputFormat) -> Result<()> {
     match format {
         InputFormat::Sqlite => load_sqlite(conn, path),
         InputFormat::DuckDb => load_duckdb(conn, path),
@@ -235,7 +263,7 @@ fn load_single_parquet(conn: &Connection, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn arrow_value_to_string(col: &dyn arrow::array::Array, row: usize) -> String {
+pub(crate) fn arrow_value_to_string(col: &dyn arrow::array::Array, row: usize) -> String {
     use arrow::array::*;
     use arrow::datatypes::DataType;
 
@@ -432,5 +460,48 @@ mod tests {
             Some(OutputFormat::Csv),
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn test_sql_query_arrow() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score INTEGER)",
+                [],
+            )?;
+            conn.execute("INSERT INTO users VALUES (1, 'Alice', 95)", [])?;
+            conn.execute("INSERT INTO users VALUES (2, 'Bob', 87)", [])?;
+            conn.execute("INSERT INTO users VALUES (3, 'Charlie', 92)", [])?;
+        }
+
+        let batches = sql_query_arrow(&db_path, "SELECT id, name, score FROM users ORDER BY id")?;
+
+        // Should have at least one batch
+        assert!(!batches.is_empty());
+
+        // Check total row count
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 3);
+
+        // Check schema
+        let schema = batches[0].schema();
+        let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+        assert_eq!(field_names, vec!["id", "name", "score"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sql_query_arrow_rejects_non_select() {
+        let result = sql_query_arrow(
+            Path::new("nonexistent.sqlite"),
+            "DROP TABLE users",
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Only SELECT"));
     }
 }

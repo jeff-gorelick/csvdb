@@ -1,10 +1,12 @@
 use std::path::Path;
 
+use arrow::pyarrow::{FromPyArrow, ToPyArrow};
+use arrow::record_batch::RecordBatch;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyDict, PyList, PyModule};
 
-use csvdb::commands::{checksum, diff, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate};
+use csvdb::commands::{checksum, diff, init, read, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, write};
 use csvdb::{NullMode, OrderMode, TableFilter};
 
 fn to_py_err(e: anyhow::Error) -> PyErr {
@@ -29,26 +31,72 @@ fn parse_null_mode(s: &str) -> PyResult<NullMode> {
     }
 }
 
-/// Convert any supported format to a .csvdb directory.
+/// Normalize a Python DataFrame (pandas, polars, or pyarrow) to a pyarrow.Table.
+fn normalize_to_arrow_table<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    // pyarrow.Table: has to_batches() method
+    if obj.hasattr("to_batches")? {
+        return Ok(obj.clone());
+    }
+    // polars.DataFrame: has to_arrow() method
+    if obj.hasattr("to_arrow")? {
+        return obj.call_method0("to_arrow");
+    }
+    // pandas.DataFrame: use pa.Table.from_pandas()
+    let pa = PyModule::import(py, "pyarrow")
+        .map_err(|_| PyRuntimeError::new_err("pyarrow is required for DataFrame conversion. Install with: pip install csvdb-py[arrow]"))?;
+    pa.getattr("Table")?.call_method1("from_pandas", (obj,))
+        .map_err(|e| PyRuntimeError::new_err(format!(
+            "Failed to convert to Arrow table: {}. Expected pandas.DataFrame, polars.DataFrame, or pyarrow.Table", e
+        )))
+}
+
+/// Convert a Python dict of DataFrames to Vec<(String, Vec<RecordBatch>)>.
+fn dict_to_arrow_tables(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<Vec<(String, Vec<RecordBatch>)>> {
+    let mut tables = Vec::new();
+    for (key, value) in dict {
+        let name: String = key.extract()?;
+        let arrow_table = normalize_to_arrow_table(py, &value)?;
+        let py_batches = arrow_table.call_method0("to_batches")?;
+        let batches_list = py_batches.downcast::<PyList>()?;
+        let mut batches = Vec::new();
+        for py_batch in batches_list.iter() {
+            batches.push(RecordBatch::from_pyarrow_bound(&py_batch)?);
+        }
+        tables.push((name, batches));
+    }
+    Ok(tables)
+}
+
+/// Convert any supported format to a .csvdb directory, or write DataFrames to csvdb.
+///
+/// When input is a string path: converts .sqlite, .duckdb, .parquetdb, or .parquet to .csvdb.
+/// When input is a dict of DataFrames: writes them as a new .csvdb directory.
 ///
 /// Args:
-///     input: Path to input file (.sqlite, .duckdb) or directory
-///     output: Output directory (default: <input>.csvdb)
-///     order: Row ordering mode - "pk", "all-columns", or "add-synthetic-key"
-///     null_mode: NULL representation - "marker", "empty", or "literal"
-///     natural_sort: Sort string PKs naturally (e.g. "item2" before "item10")
-///     order_by: Custom ORDER BY clause (e.g. "created_at DESC")
-///     compress: Compress CSV files with gzip
+///     input: Path to input file (str) or dict of DataFrames (pandas, polars, or pyarrow)
+///     output: Output directory (required when input is a dict)
+///     order: Row ordering mode - "pk", "all-columns", or "add-synthetic-key" (path mode only)
+///     null_mode: NULL representation - "marker", "empty", or "literal" (path mode only)
+///     natural_sort: Sort string PKs naturally (path mode only)
+///     order_by: Custom ORDER BY clause (path mode only)
+///     compress: Compress CSV files with gzip (path mode only)
 ///     force: Overwrite existing output directory
-///     tables: Only include these tables
-///     exclude: Exclude these tables
+///     tables: Only include these tables (path mode only)
+///     exclude: Exclude these tables (path mode only)
 ///
 /// Returns:
 ///     Output directory path as string
 #[pyfunction]
 #[pyo3(name = "to_csvdb", signature = (input, *, output=None, order="pk", null_mode="marker", natural_sort=false, order_by=None, compress=false, force=false, tables=vec![], exclude=vec![]))]
 fn py_to_csvdb(
-    input: &str,
+    py: Python<'_>,
+    input: &Bound<'_, PyAny>,
     output: Option<&str>,
     order: &str,
     null_mode: &str,
@@ -59,12 +107,28 @@ fn py_to_csvdb(
     tables: Vec<String>,
     exclude: Vec<String>,
 ) -> PyResult<String> {
+    // Dict of DataFrames → write to csvdb
+    if input.is_instance_of::<PyDict>() {
+        let output = output.ok_or_else(|| {
+            PyRuntimeError::new_err("output is required when writing from DataFrames")
+        })?;
+        let dict = input.downcast::<PyDict>()?;
+        let arrow_tables = dict_to_arrow_tables(py, dict)?;
+        let result = write::write_csvdb_from_arrow(arrow_tables, Path::new(output), force)
+            .map_err(to_py_err)?;
+        return Ok(result.to_string_lossy().into_owned());
+    }
+
+    // String path → existing conversion
+    let input_str: String = input.extract()
+        .map_err(|_| PyRuntimeError::new_err("input must be a file path (str) or dict of DataFrames"))?;
+
     let order_mode = parse_order(order)?;
     let null_m = parse_null_mode(null_mode)?;
     let filter = TableFilter::new(tables, exclude);
 
     let path = to_csv::to_csv(
-        Path::new(input),
+        Path::new(&input_str),
         order_mode,
         null_m,
         natural_sort,
@@ -327,6 +391,174 @@ fn init_csvdb(
     Ok(dict.into())
 }
 
+/// Convert Vec<RecordBatch> to a pyarrow.Table.
+fn batches_to_py_table(py: Python<'_>, batches: Vec<RecordBatch>) -> PyResult<PyObject> {
+    let pa = PyModule::import(py, "pyarrow")?;
+
+    if batches.is_empty() {
+        return Ok(pa.call_method1("table", (PyDict::new(py),))?.into());
+    }
+
+    let py_batches = PyList::empty(py);
+    for batch in &batches {
+        py_batches.append(batch.to_pyarrow(py)?)?;
+    }
+
+    Ok(pa.getattr("Table")?.call_method1("from_batches", (py_batches,))?.into())
+}
+
+/// Read tables as pyarrow Tables.
+///
+/// If `table` is specified, returns a single pyarrow.Table.
+/// If `table` is None, returns a dict mapping table names to pyarrow.Tables.
+///
+/// Requires pyarrow to be installed.
+#[pyfunction]
+#[pyo3(name = "to_arrow", signature = (path, table=None, *, tables=vec![], exclude=vec![]))]
+fn py_to_arrow(
+    py: Python<'_>,
+    path: &str,
+    table: Option<&str>,
+    tables: Vec<String>,
+    exclude: Vec<String>,
+) -> PyResult<PyObject> {
+    match table {
+        Some(table_name) => {
+            let batches = read::read_table_arrow(Path::new(path), table_name).map_err(to_py_err)?;
+            batches_to_py_table(py, batches)
+        }
+        None => {
+            let filter = TableFilter::new(tables, exclude);
+            let all_tables = read::read_tables_arrow(Path::new(path), &filter).map_err(to_py_err)?;
+            let dict = PyDict::new(py);
+            for (name, batches) in all_tables {
+                let py_table = batches_to_py_table(py, batches)?;
+                dict.set_item(name, py_table)?;
+            }
+            Ok(dict.into())
+        }
+    }
+}
+
+/// Run a read-only SQL query and return results as a pyarrow.Table.
+///
+/// Requires pyarrow to be installed.
+#[pyfunction]
+#[pyo3(name = "sql_arrow", signature = (path, query))]
+fn py_sql_arrow(
+    py: Python<'_>,
+    path: &str,
+    query: &str,
+) -> PyResult<PyObject> {
+    let batches = sql::sql_query_arrow(Path::new(path), query).map_err(to_py_err)?;
+    batches_to_py_table(py, batches)
+}
+
+/// Convert Arrow result (single pa.Table or dict of pa.Tables) to pandas DataFrames.
+fn arrow_to_pandas(py: Python<'_>, arrow_result: PyObject) -> PyResult<PyObject> {
+    let bound = arrow_result.bind(py);
+    if bound.is_instance_of::<PyDict>() {
+        let dict = bound.downcast::<PyDict>()?;
+        let result = PyDict::new(py);
+        for (key, value) in dict {
+            result.set_item(key, value.call_method0("to_pandas")?)?;
+        }
+        Ok(result.into())
+    } else {
+        Ok(bound.call_method0("to_pandas")?.into())
+    }
+}
+
+/// Convert Arrow result (single pa.Table or dict of pa.Tables) to polars DataFrames.
+fn arrow_to_polars(py: Python<'_>, arrow_result: PyObject) -> PyResult<PyObject> {
+    let pl = PyModule::import(py, "polars")?;
+    let bound = arrow_result.bind(py);
+    if bound.is_instance_of::<PyDict>() {
+        let dict = bound.downcast::<PyDict>()?;
+        let result = PyDict::new(py);
+        for (key, value) in dict {
+            result.set_item(key, pl.call_method1("from_arrow", (value,))?)?;
+        }
+        Ok(result.into())
+    } else {
+        Ok(pl.call_method1("from_arrow", (bound,))?.into())
+    }
+}
+
+/// Read tables as pandas DataFrames.
+///
+/// If `table` is specified, returns a single pd.DataFrame.
+/// If `table` is None, returns a dict mapping table names to pd.DataFrames.
+///
+/// Requires pandas and pyarrow to be installed.
+#[pyfunction]
+#[pyo3(name = "to_pandas", signature = (path, table=None, *, tables=vec![], exclude=vec![]))]
+fn py_to_pandas(
+    py: Python<'_>,
+    path: &str,
+    table: Option<&str>,
+    tables: Vec<String>,
+    exclude: Vec<String>,
+) -> PyResult<PyObject> {
+    PyModule::import(py, "pandas")
+        .map_err(|_| PyRuntimeError::new_err("pandas is required. Install with: pip install csvdb-py[pandas]"))?;
+    let arrow = py_to_arrow(py, path, table, tables, exclude)?;
+    arrow_to_pandas(py, arrow)
+}
+
+/// Read tables as polars DataFrames.
+///
+/// If `table` is specified, returns a single pl.DataFrame.
+/// If `table` is None, returns a dict mapping table names to pl.DataFrames.
+///
+/// Requires polars and pyarrow to be installed.
+#[pyfunction]
+#[pyo3(name = "to_polars", signature = (path, table=None, *, tables=vec![], exclude=vec![]))]
+fn py_to_polars(
+    py: Python<'_>,
+    path: &str,
+    table: Option<&str>,
+    tables: Vec<String>,
+    exclude: Vec<String>,
+) -> PyResult<PyObject> {
+    PyModule::import(py, "polars")
+        .map_err(|_| PyRuntimeError::new_err("polars is required. Install with: pip install csvdb-py[polars]"))?;
+    let arrow = py_to_arrow(py, path, table, tables, exclude)?;
+    arrow_to_polars(py, arrow)
+}
+
+/// Run a read-only SQL query and return results as a pandas DataFrame.
+///
+/// Requires pandas and pyarrow to be installed.
+#[pyfunction]
+#[pyo3(name = "sql_pandas", signature = (path, query))]
+fn py_sql_pandas(
+    py: Python<'_>,
+    path: &str,
+    query: &str,
+) -> PyResult<PyObject> {
+    PyModule::import(py, "pandas")
+        .map_err(|_| PyRuntimeError::new_err("pandas is required. Install with: pip install csvdb-py[pandas]"))?;
+    let arrow = py_sql_arrow(py, path, query)?;
+    arrow_to_pandas(py, arrow)
+}
+
+/// Run a read-only SQL query and return results as a polars DataFrame.
+///
+/// Requires polars and pyarrow to be installed.
+#[pyfunction]
+#[pyo3(name = "sql_polars", signature = (path, query))]
+fn py_sql_polars(
+    py: Python<'_>,
+    path: &str,
+    query: &str,
+) -> PyResult<PyObject> {
+    PyModule::import(py, "polars")
+        .map_err(|_| PyRuntimeError::new_err("polars is required. Install with: pip install csvdb-py[polars]"))?;
+    let arrow = py_sql_arrow(py, path, query)?;
+    arrow_to_polars(py, arrow)
+}
+
 /// Get the csvdb library version.
 #[pyfunction]
 fn version() -> &'static str {
@@ -345,6 +577,12 @@ fn csvdb_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_db, m)?)?;
     m.add_function(wrap_pyfunction!(validate_db, m)?)?;
     m.add_function(wrap_pyfunction!(init_csvdb, m)?)?;
+    m.add_function(wrap_pyfunction!(py_to_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(py_sql_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(py_to_pandas, m)?)?;
+    m.add_function(wrap_pyfunction!(py_to_polars, m)?)?;
+    m.add_function(wrap_pyfunction!(py_sql_pandas, m)?)?;
+    m.add_function(wrap_pyfunction!(py_sql_polars, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())
 }

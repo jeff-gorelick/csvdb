@@ -508,6 +508,11 @@ csvdb provides native Python bindings via PyO3, giving you direct access to all 
 
 ```bash
 pip install csvdb-py
+
+# With DataFrame support
+pip install csvdb-py[pandas]    # pandas + pyarrow
+pip install csvdb-py[polars]    # polars + pyarrow
+pip install csvdb-py[all]       # pandas + polars + pyarrow
 ```
 
 ### API
@@ -543,6 +548,45 @@ result = csvdb.init("./raw_csvs/")
 # Selective export
 csvdb.to_csvdb("mydb.sqlite", tables=["users", "orders"], force=True)
 csvdb.to_csvdb("mydb.sqlite", exclude=["logs"], force=True)
+```
+
+### DataFrame Support
+
+Read csvdb data directly into pandas, polars, or pyarrow DataFrames with zero-copy Arrow interchange.
+
+```python
+import csvdb
+
+# Read as pyarrow Tables
+table = csvdb.to_arrow("mydb.csvdb", "users")        # single table -> pa.Table
+tables = csvdb.to_arrow("mydb.csvdb")                 # all tables -> dict[str, pa.Table]
+
+# Read as pandas DataFrames
+df = csvdb.to_pandas("mydb.csvdb", "users")           # single table -> pd.DataFrame
+dfs = csvdb.to_pandas("mydb.csvdb")                   # all tables -> dict[str, pd.DataFrame]
+
+# Read as polars DataFrames
+df = csvdb.to_polars("mydb.csvdb", "users")           # single table -> pl.DataFrame
+dfs = csvdb.to_polars("mydb.csvdb")                   # all tables -> dict[str, pl.DataFrame]
+
+# SQL queries returning DataFrames
+table = csvdb.sql_arrow("mydb.csvdb", "SELECT * FROM users WHERE score > 90")
+df = csvdb.sql_pandas("mydb.csvdb", "SELECT * FROM users WHERE score > 90")
+df = csvdb.sql_polars("mydb.csvdb", "SELECT * FROM users WHERE score > 90")
+```
+
+Write DataFrames back to csvdb format:
+
+```python
+import pandas as pd
+
+df = pd.DataFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
+csvdb.to_csvdb({"users": df}, output="mydb.csvdb")
+
+# Works with any DataFrame type (pandas, polars, pyarrow)
+import polars as pl
+df = pl.DataFrame({"id": [1, 2], "name": ["Alice", "Bob"]})
+csvdb.to_csvdb({"users": df}, output="mydb.csvdb", force=True)
 ```
 
 ### Development

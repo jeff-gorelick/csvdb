@@ -9,5 +9,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 csvdb = { path = "../csvdb" }
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py38"] }
+arrow = { version = "56", default-features = false, features = ["pyarrow"] }
 anyhow = "1"
