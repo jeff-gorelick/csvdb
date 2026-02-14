@@ -1,6 +1,6 @@
 [package]
 name = "csvdb"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "Convert between SQLite/DuckDB databases and CSV directories"
 license = "MIT"

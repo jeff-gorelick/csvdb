@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "csvdb"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "arrow",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "csvdb-ffi"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "csv",
  "csvdb",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "csvdb-python"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "arrow",
