@@ -1,6 +1,6 @@
 [package]
 name = "csvdb-ffi"
-version = "0.2.8"
+version.workspace = true
 edition = "2021"
 
 [lib]
