@@ -526,4 +526,99 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_checksum_duckdb() -> Result<()> {
+        let dir = tempdir()?;
+        let sqlite_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = Connection::open(&sqlite_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", [])?;
+        }
+
+        // Convert to DuckDB
+        let no_filter = TableFilter::new(vec![], vec![]);
+        let duckdb_path = to_duckdb::to_duckdb(&sqlite_path, None, true, &no_filter)?;
+
+        let sqlite_cksum = checksum(&sqlite_path, &no_filter)?;
+        let duckdb_cksum = checksum(&duckdb_path, &no_filter)?;
+
+        assert_eq!(sqlite_cksum, duckdb_cksum);
+        Ok(())
+    }
+
+    #[test]
+    fn test_checksum_parquetdb() -> Result<()> {
+        let dir = tempdir()?;
+        let sqlite_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = Connection::open(&sqlite_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", [])?;
+        }
+
+        // Convert to parquetdb
+        let no_filter = TableFilter::new(vec![], vec![]);
+        let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
+            &sqlite_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+        )?;
+
+        let sqlite_cksum = checksum(&sqlite_path, &no_filter)?;
+        let parquetdb_cksum = checksum(&parquetdb, &no_filter)?;
+
+        assert_eq!(sqlite_cksum, parquetdb_cksum);
+        Ok(())
+    }
+
+    #[test]
+    fn test_checksum_single_parquet() -> Result<()> {
+        let dir = tempdir()?;
+        let sqlite_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = Connection::open(&sqlite_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'pq_test')", [])?;
+        }
+
+        // Create parquetdb, then checksum just the .parquet file
+        let no_filter = TableFilter::new(vec![], vec![]);
+        let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
+            &sqlite_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+        )?;
+
+        let parquet_file = parquetdb.join("t.parquet");
+        let cksum = checksum(&parquet_file, &no_filter)?;
+        assert!(!cksum.is_empty());
+
+        // Same file should give same checksum
+        let cksum2 = checksum(&parquet_file, &no_filter)?;
+        assert_eq!(cksum, cksum2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_checksum_table_filter() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("CREATE TABLE t2 (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t1 VALUES (1, 'a')", [])?;
+            conn.execute("INSERT INTO t2 VALUES (1, 'b')", [])?;
+        }
+
+        let full = checksum(&db_path, &TableFilter::new(vec![], vec![]))?;
+        let t1_only = checksum(&db_path, &TableFilter::new(vec!["t1".to_string()], vec![]))?;
+        let t2_excluded = checksum(&db_path, &TableFilter::new(vec![], vec!["t2".to_string()]))?;
+
+        assert_ne!(full, t1_only);
+        assert_eq!(t1_only, t2_excluded);
+        Ok(())
+    }
 }

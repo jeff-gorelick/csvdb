@@ -423,4 +423,171 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_duckdb_to_parquetdb() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.duckdb");
+
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'Hello')", [])?;
+        }
+
+        let parquetdb = to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+
+        assert!(parquetdb.join("t.parquet").exists());
+        assert!(parquetdb.join("schema.sql").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parquetdb_to_parquetdb_roundtrip() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("src.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'round')", [])?;
+        }
+
+        // sqlite -> parquetdb -> parquetdb (with explicit output to avoid path collision)
+        let pdb1 = to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+        let pdb2_path = dir.path().join("copy.parquetdb");
+        let pdb2 = to_parquetdb(
+            &pdb1, OrderMode::Pk, NullMode::Marker, None, Some(&pdb2_path), true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+
+        assert!(pdb2.join("t.parquet").exists());
+
+        // Verify data
+        let conn = Connection::open_in_memory()?;
+        let abs = pdb2.join("t.parquet").canonicalize()?;
+        let p = abs.to_string_lossy().replace('\\', "/");
+        conn.execute(&format!("CREATE TABLE t AS SELECT * FROM read_parquet('{}')", p), [])?;
+        let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(val, "round");
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_parquetdb_all_columns_mode() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            // Use a table with PK (load_sqlite in to_parquetdb uses from_sqlite which requires PK)
+            conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, category TEXT, price REAL)", [])?;
+            conn.execute("INSERT INTO items VALUES (1, 'A', 10.0)", [])?;
+            conn.execute("INSERT INTO items VALUES (2, 'B', 20.0)", [])?;
+        }
+
+        let parquetdb = to_parquetdb(
+            &db_path, OrderMode::AllColumns, NullMode::Marker, None, None, true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+
+        assert!(parquetdb.join("items.parquet").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_parquetdb_custom_order_by() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'Charlie')", [])?;
+            conn.execute("INSERT INTO t VALUES (2, 'Alice')", [])?;
+        }
+
+        let parquetdb = to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, Some("name ASC"), None, true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+
+        assert!(parquetdb.join("t.parquet").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_parquetdb_no_force_rejects() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])?;
+        }
+
+        // First create with force
+        to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+
+        // Second without force should fail
+        let result = to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, None, false,
+            &TableFilter::new(vec![], vec![]),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("--force"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_parquetdb_table_filter() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)", [])?;
+            conn.execute("CREATE TABLE t2 (id INTEGER PRIMARY KEY)", [])?;
+            conn.execute("INSERT INTO t1 VALUES (1)", [])?;
+            conn.execute("INSERT INTO t2 VALUES (1)", [])?;
+        }
+
+        let parquetdb = to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &TableFilter::new(vec!["t1".to_string()], vec![]),
+        )?;
+
+        assert!(parquetdb.join("t1.parquet").exists());
+        assert!(!parquetdb.join("t2.parquet").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_parquetdb_custom_output() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+        let output = dir.path().join("custom.parquetdb");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])?;
+        }
+
+        let parquetdb = to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, Some(&output), true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
+
+        assert_eq!(parquetdb, output);
+        Ok(())
+    }
 }

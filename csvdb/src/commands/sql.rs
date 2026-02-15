@@ -504,4 +504,132 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Only SELECT"));
     }
+
+    #[test]
+    fn test_sql_query_structured() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'Alice', 95)", [])?;
+            conn.execute("INSERT INTO t VALUES (2, NULL, 80)", [])?;
+        }
+
+        let result = sql_query(&db_path, "SELECT id, name, score FROM t ORDER BY id")?;
+        assert_eq!(result.column_names, vec!["id", "name", "score"]);
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][1], "Alice");
+        // Row 2 has NULL name
+        assert!(result.null_flags[1][1]);
+        assert!(!result.null_flags[0][1]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_query_duckdb() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.duckdb");
+
+        {
+            let conn = duckdb::Connection::open(&db_path)?;
+            conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR)", [])?;
+            conn.execute("INSERT INTO items VALUES (1, 'Apple')", [])?;
+            conn.execute("INSERT INTO items VALUES (2, 'Banana')", [])?;
+        }
+
+        let result = sql_query(&db_path, "SELECT * FROM items ORDER BY id")?;
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][1], "Apple");
+        Ok(())
+    }
+
+    #[test]
+    fn test_query_csvdb() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("test.csvdb");
+        std::fs::create_dir(&csvdb_dir)?;
+
+        std::fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n",
+        )?;
+        std::fs::write(csvdb_dir.join("t.csv"), "\"id\",\"val\"\n\"1\",\"hello\"\n\"2\",\"world\"\n")?;
+
+        let result = sql_query(&csvdb_dir, "SELECT * FROM t ORDER BY id")?;
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][1], "hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_query_parquetdb() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("src.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'test')", [])?;
+        }
+
+        // Create parquetdb via to_parquetdb
+        let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
+            &db_path,
+            crate::OrderMode::Pk,
+            crate::NullMode::Marker,
+            None, None, true,
+            &crate::TableFilter::new(vec![], vec![]),
+        )?;
+
+        let result = sql_query(&parquetdb, "SELECT * FROM t")?;
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][1], "test");
+        Ok(())
+    }
+
+    #[test]
+    fn test_query_single_parquet() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("src.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'parquet_test')", [])?;
+        }
+
+        // Create parquetdb, then use the .parquet file directly
+        let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
+            &db_path,
+            crate::OrderMode::Pk,
+            crate::NullMode::Marker,
+            None, None, true,
+            &crate::TableFilter::new(vec![], vec![]),
+        )?;
+
+        let parquet_file = parquetdb.join("t.parquet");
+        let result = sql_query(&parquet_file, "SELECT * FROM t")?;
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][1], "parquet_test");
+        Ok(())
+    }
+
+    #[test]
+    fn test_sql_table_format() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'Alice')", [])?;
+        }
+
+        // Table format should not error
+        sql(&db_path, "SELECT * FROM t", Some(OutputFormat::Table))?;
+        Ok(())
+    }
 }

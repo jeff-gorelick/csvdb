@@ -506,4 +506,145 @@ mod tests {
         assert!(has_diff);
         Ok(())
     }
+
+    #[test]
+    fn test_diff_removed_table() -> Result<()> {
+        let dir = tempdir()?;
+        let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
+                        CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
+        let left = make_csvdb(dir.path(), "a.csvdb", schema2, &[
+            ("t", "id,name\n1,Alice\n"),
+            ("t2", "id,val\n1,x\n"),
+        ]);
+        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
+
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_table_filter() -> Result<()> {
+        let dir = tempdir()?;
+        let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
+                        CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
+        let left = make_csvdb(dir.path(), "a.csvdb", schema2, &[
+            ("t", "id,name\n1,Alice\n"),
+            ("t2", "id,val\n1,x\n"),
+        ]);
+        let right = make_csvdb(dir.path(), "b.csvdb", schema2, &[
+            ("t", "id,name\n1,Alice\n"),
+            ("t2", "id,val\n1,changed\n"),
+        ]);
+
+        // Filter to only t (which is identical) — no diff expected
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec!["t".to_string()], vec![]))?;
+        assert!(!has_diff);
+
+        // Without filter — t2 differs
+        let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_sqlite_sources() -> Result<()> {
+        let dir = tempdir()?;
+        let db1_path = dir.path().join("db1.sqlite");
+        let db2_path = dir.path().join("db2.sqlite");
+
+        {
+            let conn = rusqlite::Connection::open(&db1_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", []).unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&db2_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'world')", []).unwrap();
+        }
+
+        let has_diff = diff(&db1_path, &db2_path, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(has_diff);
+
+        // Same data should show no diff
+        let has_diff = diff(&db1_path, &db1_path, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(!has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_duckdb_sources() -> Result<()> {
+        let dir = tempdir()?;
+        let db1_path = dir.path().join("db1.duckdb");
+        let db2_path = dir.path().join("db2.duckdb");
+
+        {
+            let conn = duckdb::Connection::open(&db1_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", []).unwrap();
+        }
+        {
+            let conn = duckdb::Connection::open(&db2_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'world')", []).unwrap();
+        }
+
+        let has_diff = diff(&db1_path, &db2_path, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_parquetdb_sources() -> Result<()> {
+        let dir = tempdir()?;
+        let db1_path = dir.path().join("db1.sqlite");
+        let db2_path = dir.path().join("db2.sqlite");
+
+        {
+            let conn = rusqlite::Connection::open(&db1_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'same')", []).unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&db2_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'same')", []).unwrap();
+        }
+
+        let no_filter = TableFilter::new(vec![], vec![]);
+        let pdb1 = crate::commands::to_parquetdb::to_parquetdb(
+            &db1_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+        )?;
+        let pdb2 = crate::commands::to_parquetdb::to_parquetdb(
+            &db2_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+        )?;
+
+        let has_diff = diff(&pdb1, &pdb2, false, &no_filter)?;
+        assert!(!has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_cross_format() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'cross')", []).unwrap();
+        }
+
+        // sqlite -> csvdb
+        let no_filter = TableFilter::new(vec![], vec![]);
+        let csvdb = crate::commands::to_csv::to_csv(
+            &db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &no_filter,
+        )?;
+
+        // Diff sqlite vs csvdb should show no differences (same data)
+        let has_diff = diff(&db_path, &csvdb, false, &no_filter)?;
+        assert!(!has_diff);
+        Ok(())
+    }
 }

@@ -153,4 +153,75 @@ mod tests {
     fn test_unknown_format() {
         assert!(InputFormat::from_path(Path::new("test.unknown")).is_err());
     }
+
+    #[test]
+    fn test_detect_dir_by_contents_csvdb() -> Result<()> {
+        let dir = tempdir()?;
+        // Directory without .csvdb extension but with schema.sql and CSV files
+        let data_dir = dir.path().join("mydata");
+        fs::create_dir(&data_dir)?;
+        fs::write(data_dir.join("schema.sql"), "CREATE TABLE t (id INTEGER);")?;
+        fs::write(data_dir.join("t.csv"), "id\n1\n")?;
+
+        assert_eq!(InputFormat::from_path(&data_dir)?, InputFormat::Csvdb);
+        Ok(())
+    }
+
+    #[test]
+    fn test_detect_dir_by_contents_parquetdb() -> Result<()> {
+        let dir = tempdir()?;
+        // Directory without .parquetdb extension but with schema.sql and .parquet files
+        let data_dir = dir.path().join("mydata");
+        fs::create_dir(&data_dir)?;
+        fs::write(data_dir.join("schema.sql"), "CREATE TABLE t (id INTEGER);")?;
+        fs::write(data_dir.join("t.parquet"), "fake")?;
+
+        assert_eq!(InputFormat::from_path(&data_dir)?, InputFormat::Parquetdb);
+        Ok(())
+    }
+
+    #[test]
+    fn test_detect_dir_unknown() -> Result<()> {
+        let dir = tempdir()?;
+        // Directory with no schema.sql
+        let data_dir = dir.path().join("random");
+        fs::create_dir(&data_dir)?;
+
+        let result = InputFormat::from_path(&data_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Cannot detect"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_nonexistent_csvdb_path() {
+        let result = InputFormat::from_path(Path::new("/tmp/nonexistent.csvdb"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Path not found"));
+    }
+
+    #[test]
+    fn test_nonexistent_parquetdb_path() {
+        let result = InputFormat::from_path(Path::new("/tmp/nonexistent.parquetdb"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Path not found"));
+    }
+
+    #[test]
+    fn test_default_output_extension() {
+        assert_eq!(InputFormat::Sqlite.default_output_extension(), "sqlite");
+        assert_eq!(InputFormat::DuckDb.default_output_extension(), "duckdb");
+        assert_eq!(InputFormat::Csvdb.default_output_extension(), "csvdb");
+        assert_eq!(InputFormat::Parquetdb.default_output_extension(), "parquetdb");
+        assert_eq!(InputFormat::Parquet.default_output_extension(), "parquet");
+    }
+
+    #[test]
+    fn test_is_directory() {
+        assert!(InputFormat::Csvdb.is_directory());
+        assert!(InputFormat::Parquetdb.is_directory());
+        assert!(!InputFormat::Sqlite.is_directory());
+        assert!(!InputFormat::DuckDb.is_directory());
+        assert!(!InputFormat::Parquet.is_directory());
+    }
 }

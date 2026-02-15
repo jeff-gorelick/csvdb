@@ -274,6 +274,73 @@ mod tests {
     }
 
     #[test]
+    fn test_no_force_rejects_existing() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("nf.csvdb");
+        std::fs::create_dir(&csvdb_dir)?;
+        std::fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        std::fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+
+        // First create with force
+        to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
+
+        // Second without force should fail
+        let result = to_duckdb(&csvdb_dir, None, false, &TableFilter::new(vec![], vec![]));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("--force"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_sqlite_to_duckdb_direct() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("src.sqlite");
+
+        {
+            let conn = SqliteConnection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'direct')", [])?;
+        }
+
+        // SQLite input (non-csvdb) goes through to_csv internally
+        let output = dir.path().join("out.duckdb");
+        let duckdb_path = to_duckdb(&db_path, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+
+        let conn = duckdb::Connection::open(&duckdb_path)?;
+        let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(val, "direct");
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_duckdb_table_filter() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("filter.csvdb");
+        std::fs::create_dir(&csvdb_dir)?;
+        std::fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t1\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n\
+             CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        std::fs::write(csvdb_dir.join("t1.csv"), "id\n1\n")?;
+        std::fs::write(csvdb_dir.join("t2.csv"), "id\n1\n")?;
+
+        let duckdb_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec!["t1".to_string()], vec![]))?;
+
+        let conn = duckdb::Connection::open(&duckdb_path)?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t1", [], |r| r.get(0))?;
+        assert_eq!(count, 1);
+
+        // t2 exists (schema) but has no data
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t2", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
     fn test_null_values_roundtrip() -> Result<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("nulls.sqlite");

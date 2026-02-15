@@ -353,4 +353,126 @@ mod tests {
         assert!(err_msg.contains("--force"));
         Ok(())
     }
+
+    #[test]
+    fn test_compressed_csv_to_sqlite() -> Result<()> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("gz.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
+        )?;
+
+        // Write compressed CSV
+        let gz_path = csvdb_dir.join("t.csv.gz");
+        let f = fs::File::create(&gz_path)?;
+        let mut encoder = GzEncoder::new(f, Compression::default());
+        encoder.write_all(b"\"id\",\"name\"\n\"1\",\"Alice\"\n\"2\",\"Bob\"\n")?;
+        encoder.finish()?;
+
+        // This forces the rusqlite path (sqlite3 CLI can't read .csv.gz)
+        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
+
+        let conn = Connection::open(&db_path)?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))?;
+        assert_eq!(count, 2);
+
+        let name: String = conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(name, "Alice");
+        Ok(())
+    }
+
+    #[test]
+    fn test_sqlite_to_sqlite_via_csvdb() -> Result<()> {
+        let dir = tempdir()?;
+        let src_db = dir.path().join("src.sqlite");
+
+        {
+            let conn = Connection::open(&src_db)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'test')", [])?;
+        }
+
+        // SQLite input (non-csvdb) goes through to_csv internally
+        let output = dir.path().join("out.sqlite");
+        let db_path = to_sqlite(&src_db, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+
+        let conn = Connection::open(&db_path)?;
+        let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(val, "test");
+        Ok(())
+    }
+
+    #[test]
+    fn test_duckdb_to_sqlite() -> Result<()> {
+        let dir = tempdir()?;
+        let duckdb_path = dir.path().join("src.duckdb");
+
+        {
+            let conn = duckdb::Connection::open(&duckdb_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'Duck')", [])?;
+        }
+
+        let output = dir.path().join("out.sqlite");
+        let db_path = to_sqlite(&duckdb_path, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+
+        let conn = Connection::open(&db_path)?;
+        let name: String = conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(name, "Duck");
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_sqlite_with_nulls() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("nulls.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "\"id\",\"name\"\n\"1\",\"Alice\"\n\"2\",\"\\N\"\n")?;
+
+        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
+
+        let conn = Connection::open(&db_path)?;
+        let name: Option<String> = conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
+        assert_eq!(name, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_sqlite_table_filter() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("filter.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t1\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n\
+             CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t1.csv"), "id\n1\n")?;
+        fs::write(csvdb_dir.join("t2.csv"), "id\n1\n")?;
+
+        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec!["t1".to_string()], vec![]))?;
+
+        let conn = Connection::open(&db_path)?;
+        // t1 should have data
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t1", [], |r| r.get(0))?;
+        assert_eq!(count, 1);
+
+        // t2 exists (schema created) but has no data
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t2", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
 }

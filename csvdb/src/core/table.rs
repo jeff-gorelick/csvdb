@@ -941,4 +941,305 @@ mod tests {
         assert_eq!(natural_cmp("abc10", "abd2"), Ordering::Less);
         assert_eq!(natural_cmp("b1", "a2"), Ordering::Greater);
     }
+
+    #[test]
+    fn test_table_from_duckdb_pk() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR)", [])?;
+        conn.execute("INSERT INTO t VALUES (2, 'Bob')", [])?;
+        conn.execute("INSERT INTO t VALUES (1, 'Alice')", [])?;
+
+        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::Pk)?;
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Marker)?;
+
+        assert_eq!(result.table.rows.len(), 2);
+        assert_eq!(result.table.rows[0].pk_values, vec!["1"]);
+        assert_eq!(result.table.rows[0].values[1], "Alice");
+        assert!(result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_table_from_duckdb_all_columns() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE events (ts VARCHAR, msg VARCHAR)", [])?;
+        conn.execute("INSERT INTO events VALUES ('2024-01-02', 'second')", [])?;
+        conn.execute("INSERT INTO events VALUES ('2024-01-01', 'first')", [])?;
+
+        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["events"], OrderMode::AllColumns, NullMode::Marker)?;
+
+        assert_eq!(result.table.rows.len(), 2);
+        assert_eq!(result.table.rows[0].values[0], "2024-01-01");
+        assert!(result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_table_from_duckdb_all_columns_duplicates() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE events (ts VARCHAR, msg VARCHAR)", [])?;
+        conn.execute("INSERT INTO events VALUES ('2024-01-01', 'same')", [])?;
+        conn.execute("INSERT INTO events VALUES ('2024-01-01', 'same')", [])?;
+
+        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["events"], OrderMode::AllColumns, NullMode::Marker)?;
+
+        assert_eq!(result.table.rows.len(), 2);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("duplicate"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_table_from_duckdb_synthetic_key() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE events (ts VARCHAR, msg VARCHAR)", [])?;
+        conn.execute("INSERT INTO events VALUES ('2024-01-02', 'second')", [])?;
+        conn.execute("INSERT INTO events VALUES ('2024-01-01', 'first')", [])?;
+
+        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AddSyntheticKey)?;
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["events"], OrderMode::AddSyntheticKey, NullMode::Marker)?;
+
+        assert_eq!(result.table.columns[0], SYNTHETIC_KEY_COLUMN);
+        assert_eq!(result.table.pk_columns, vec![SYNTHETIC_KEY_COLUMN]);
+        assert_eq!(result.table.rows.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_table_from_duckdb_custom_order() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, 'Charlie')", [])?;
+        conn.execute("INSERT INTO t VALUES (2, 'Alice')", [])?;
+        conn.execute("INSERT INTO t VALUES (3, 'Bob')", [])?;
+
+        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::Pk)?;
+        let result = Table::from_duckdb_custom_order(&conn, &schema.tables["t"], "name ASC", NullMode::Marker)?;
+
+        assert_eq!(result.table.rows[0].values[1], "Alice");
+        assert_eq!(result.table.rows[1].values[1], "Bob");
+        assert_eq!(result.table.rows[2].values[1], "Charlie");
+        assert!(result.table.pk_columns.is_empty()); // Custom order → no PK
+        Ok(())
+    }
+
+    #[test]
+    fn test_table_from_duckdb_null_modes() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, NULL)", [])?;
+        conn.execute("INSERT INTO t VALUES (2, 'hello')", [])?;
+
+        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::Pk)?;
+
+        // Marker mode
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Marker)?;
+        assert_eq!(result.table.rows[0].values[1], "\\N");
+
+        // Empty mode
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Empty)?;
+        assert_eq!(result.table.rows[0].values[1], "");
+
+        // Literal mode
+        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Literal)?;
+        assert_eq!(result.table.rows[0].values[1], "NULL");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_to_duckdb() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR, score DOUBLE)", [])?;
+
+        let table = Table {
+            name: "t".to_string(),
+            columns: vec!["id".to_string(), "name".to_string(), "score".to_string()],
+            pk_columns: vec!["id".to_string()],
+            rows: vec![
+                Row {
+                    pk_values: vec!["1".to_string()],
+                    values: vec!["1".to_string(), "Alice".to_string(), "95.5".to_string()],
+                },
+                Row {
+                    pk_values: vec!["2".to_string()],
+                    values: vec!["2".to_string(), "\\N".to_string(), "\\N".to_string()],
+                },
+            ],
+        };
+
+        table.write_to_duckdb(&conn)?;
+
+        let name: Option<String> = conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert_eq!(name, Some("Alice".to_string()));
+
+        let score: Option<f64> = conn.query_row("SELECT score FROM t WHERE id = 1", [], |r| r.get(0))?;
+        assert!((score.unwrap() - 95.5).abs() < 0.01);
+
+        // Row 2: \N should be NULL
+        let name: Option<String> = conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
+        assert_eq!(name, None);
+
+        let score: Option<f64> = conn.query_row("SELECT score FROM t WHERE id = 2", [], |r| r.get(0))?;
+        assert_eq!(score, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_to_duckdb_empty_table() -> Result<()> {
+        let conn = DuckDbConnection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])?;
+
+        let table = Table {
+            name: "t".to_string(),
+            columns: vec!["id".to_string()],
+            pk_columns: vec!["id".to_string()],
+            rows: vec![],
+        };
+
+        // Should return Ok without inserting anything
+        table.write_to_duckdb(&conn)?;
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_to_sqlite_empty_table() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])?;
+
+        let table = Table {
+            name: "t".to_string(),
+            columns: vec!["id".to_string()],
+            pk_columns: vec!["id".to_string()],
+            rows: vec![],
+        };
+
+        table.write_to_sqlite(&conn)?;
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_for_duckdb() {
+        // NULL marker
+        assert!(matches!(convert_for_duckdb("\\N", "TEXT"), DuckDbValue::Null));
+        assert!(matches!(convert_for_duckdb("\\N", "INTEGER"), DuckDbValue::Null));
+
+        // Integer values
+        assert!(matches!(convert_for_duckdb("42", "INTEGER"), DuckDbValue::Integer(42)));
+        assert!(matches!(convert_for_duckdb("-7", "BIGINT"), DuckDbValue::Integer(-7)));
+
+        // Float values
+        assert!(matches!(convert_for_duckdb("3.14", "DOUBLE"), DuckDbValue::Real(_)));
+        assert!(matches!(convert_for_duckdb("2.5", "FLOAT"), DuckDbValue::Real(_)));
+
+        // Text values
+        assert!(matches!(convert_for_duckdb("hello", "TEXT"), DuckDbValue::Text(_)));
+        assert!(matches!(convert_for_duckdb("hello", "VARCHAR"), DuckDbValue::Text(_)));
+
+        // Empty string in numeric column → NULL
+        assert!(matches!(convert_for_duckdb("", "INTEGER"), DuckDbValue::Null));
+        assert!(matches!(convert_for_duckdb("", "DOUBLE"), DuckDbValue::Null));
+
+        // Empty string in text column → empty text
+        assert!(matches!(convert_for_duckdb("", "TEXT"), DuckDbValue::Text(_)));
+
+        // Non-parseable numeric → NULL
+        assert!(matches!(convert_for_duckdb("not_a_number", "DOUBLE"), DuckDbValue::Null));
+    }
+
+    #[test]
+    fn test_duckdb_value_to_string_types() {
+        use duckdb::types::Value;
+
+        assert_eq!(duckdb_value_to_string(&Value::Null, NullMode::Marker), "\\N");
+        assert_eq!(duckdb_value_to_string(&Value::Null, NullMode::Empty), "");
+        assert_eq!(duckdb_value_to_string(&Value::Null, NullMode::Literal), "NULL");
+
+        assert_eq!(duckdb_value_to_string(&Value::Boolean(true), NullMode::Marker), "1");
+        assert_eq!(duckdb_value_to_string(&Value::Boolean(false), NullMode::Marker), "0");
+
+        assert_eq!(duckdb_value_to_string(&Value::TinyInt(1), NullMode::Marker), "1");
+        assert_eq!(duckdb_value_to_string(&Value::SmallInt(100), NullMode::Marker), "100");
+        assert_eq!(duckdb_value_to_string(&Value::Int(42), NullMode::Marker), "42");
+        assert_eq!(duckdb_value_to_string(&Value::BigInt(1000), NullMode::Marker), "1000");
+        assert_eq!(duckdb_value_to_string(&Value::HugeInt(999), NullMode::Marker), "999");
+
+        assert_eq!(duckdb_value_to_string(&Value::UTinyInt(1), NullMode::Marker), "1");
+        assert_eq!(duckdb_value_to_string(&Value::USmallInt(100), NullMode::Marker), "100");
+        assert_eq!(duckdb_value_to_string(&Value::UInt(42), NullMode::Marker), "42");
+        assert_eq!(duckdb_value_to_string(&Value::UBigInt(1000), NullMode::Marker), "1000");
+
+        assert_eq!(duckdb_value_to_string(&Value::Float(1.5), NullMode::Marker), "1.5");
+        assert_eq!(duckdb_value_to_string(&Value::Double(2.5), NullMode::Marker), "2.5");
+        assert_eq!(duckdb_value_to_string(&Value::Text("hello".to_string()), NullMode::Marker), "hello");
+
+        // Blob
+        assert_eq!(duckdb_value_to_string(&Value::Blob(vec![0xde, 0xad]), NullMode::Marker), "dead");
+    }
+
+    #[test]
+    fn test_sqlite_value_to_string_blob() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, data BLOB)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, X'DEADBEEF')", [])?;
+
+        let schema = crate::core::Schema::from_sqlite(&conn)?;
+        let table = Table::from_sqlite(&conn, &schema.tables["t"])?;
+
+        assert_eq!(table.rows[0].values[1], "deadbeef");
+        Ok(())
+    }
+
+    #[test]
+    fn test_sqlite_null_modes() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, NULL)", [])?;
+
+        let schema = crate::core::Schema::from_sqlite(&conn)?;
+
+        let result = Table::from_sqlite_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Empty)?;
+        assert_eq!(result.table.rows[0].values[1], "");
+
+        let result = Table::from_sqlite_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Literal)?;
+        assert_eq!(result.table.rows[0].values[1], "NULL");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_to_sqlite_large_batch() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+
+        // Create more rows than the batch size (999/2 = 499, cap 500)
+        let rows: Vec<Row> = (0..600)
+            .map(|i| Row {
+                pk_values: vec![i.to_string()],
+                values: vec![i.to_string(), format!("val_{}", i)],
+            })
+            .collect();
+
+        let table = Table {
+            name: "t".to_string(),
+            columns: vec!["id".to_string(), "val".to_string()],
+            pk_columns: vec!["id".to_string()],
+            rows,
+        };
+
+        table.write_to_sqlite(&conn)?;
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))?;
+        assert_eq!(count, 600);
+        Ok(())
+    }
 }

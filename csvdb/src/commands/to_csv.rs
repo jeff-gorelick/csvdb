@@ -629,4 +629,290 @@ mod tests {
         assert_eq!(InputFormat::from_path(Path::new("test.duckdb")).unwrap(), InputFormat::DuckDb);
         assert!(InputFormat::from_path(Path::new("test.unknown")).is_err());
     }
+
+    #[test]
+    fn test_to_csv_compressed() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", [])?;
+        conn.execute("INSERT INTO users VALUES (1, 'Alice')", [])?;
+        conn.execute("INSERT INTO users VALUES (2, 'Bob')", [])?;
+        drop(conn);
+
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, true, None, true, &TableFilter::new(vec![], vec![]))?;
+
+        assert!(csvdb.join("schema.sql").exists());
+        assert!(csvdb.join("users.csv.gz").exists());
+        assert!(!csvdb.join("users.csv").exists());
+
+        // Verify compressed file is valid
+        let gz_file = std::fs::File::open(csvdb.join("users.csv.gz"))?;
+        let mut decoder = flate2::read::GzDecoder::new(gz_file);
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut content)?;
+        assert!(content.contains("Alice"));
+        assert!(content.contains("Bob"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_null_mode_empty() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, NULL)", [])?;
+        conn.execute("INSERT INTO t VALUES (2, 'hello')", [])?;
+        drop(conn);
+
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Empty, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csv_content = fs::read_to_string(csvdb.join("t.csv"))?;
+        // Empty mode: NULL is represented as empty string
+        assert!(csv_content.contains("hello"));
+        assert!(!csv_content.contains("\\N"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_null_mode_literal() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, NULL)", [])?;
+        conn.execute("INSERT INTO t VALUES (2, 'hello')", [])?;
+        drop(conn);
+
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Literal, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csv_content = fs::read_to_string(csvdb.join("t.csv"))?;
+        assert!(csv_content.contains("NULL"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_custom_order_by() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, 'Charlie')", [])?;
+        conn.execute("INSERT INTO t VALUES (2, 'Alice')", [])?;
+        conn.execute("INSERT INTO t VALUES (3, 'Bob')", [])?;
+        drop(conn);
+
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, Some("name ASC"), false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csv_content = fs::read_to_string(csvdb.join("t.csv"))?;
+
+        // With ORDER BY name ASC, Alice should come first
+        let alice_pos = csv_content.find("Alice").unwrap();
+        let bob_pos = csv_content.find("Bob").unwrap();
+        let charlie_pos = csv_content.find("Charlie").unwrap();
+        assert!(alice_pos < bob_pos);
+        assert!(bob_pos < charlie_pos);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_table_filter() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("CREATE TABLE t2 (id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("INSERT INTO t1 VALUES (1)", [])?;
+        conn.execute("INSERT INTO t2 VALUES (1)", [])?;
+        drop(conn);
+
+        // Include only t1
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec!["t1".to_string()], vec![]))?;
+        assert!(csvdb.join("t1.csv").exists());
+        assert!(!csvdb.join("t2.csv").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_table_exclude() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("CREATE TABLE t2 (id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("INSERT INTO t1 VALUES (1)", [])?;
+        conn.execute("INSERT INTO t2 VALUES (1)", [])?;
+        drop(conn);
+
+        // Exclude t2
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec!["t2".to_string()]))?;
+        assert!(csvdb.join("t1.csv").exists());
+        assert!(!csvdb.join("t2.csv").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_no_force_rejects_existing() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])?;
+        drop(conn);
+
+        // First create
+        to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+
+        // Second create without force should fail
+        let result = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, false, &TableFilter::new(vec![], vec![]));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("--force"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_incremental_sqlite() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", [])?;
+        conn.execute("INSERT INTO users VALUES (1, 'Alice')", [])?;
+        conn.execute("INSERT INTO users VALUES (2, 'Bob')", [])?;
+        drop(conn);
+
+        // First incremental export
+        let (csvdb, summary) = to_csv_incremental(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, &TableFilter::new(vec![], vec![]))?;
+
+        assert!(csvdb.join("schema.sql").exists());
+        assert!(csvdb.join("users.csv").exists());
+        assert_eq!(summary.added.len(), 1); // users is new
+        assert!(summary.updated.is_empty());
+        assert!(summary.unchanged.is_empty());
+
+        // Second incremental with no changes
+        let (_, summary2) = to_csv_incremental(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, Some(&csvdb), &TableFilter::new(vec![], vec![]))?;
+        assert!(summary2.added.is_empty());
+        assert!(summary2.updated.is_empty());
+        assert_eq!(summary2.unchanged.len(), 1); // users unchanged
+
+        // Third incremental with data change
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("INSERT INTO users VALUES (3, 'Charlie')", [])?;
+        drop(conn);
+
+        let (_, summary3) = to_csv_incremental(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, Some(&csvdb), &TableFilter::new(vec![], vec![]))?;
+        assert!(summary3.added.is_empty());
+        assert_eq!(summary3.updated.len(), 1); // users was updated
+        assert!(summary3.unchanged.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_incremental_duckdb() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.duckdb");
+
+        let conn = DuckDbConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL)", [])?;
+        conn.execute("INSERT INTO items VALUES (1, 'Apple')", [])?;
+        drop(conn);
+
+        let (csvdb, summary) = to_csv_incremental(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, &TableFilter::new(vec![], vec![]))?;
+
+        assert!(csvdb.join("items.csv").exists());
+        assert_eq!(summary.added.len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_incremental_removed_table() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        // Create database with two tables
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("CREATE TABLE t2 (id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("INSERT INTO t1 VALUES (1)", [])?;
+        conn.execute("INSERT INTO t2 VALUES (1)", [])?;
+        drop(conn);
+
+        // First export with both tables
+        let (csvdb, _) = to_csv_incremental(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, &TableFilter::new(vec![], vec![]))?;
+        assert!(csvdb.join("t1.csv").exists());
+        assert!(csvdb.join("t2.csv").exists());
+
+        // Drop t2 and re-export
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("DROP TABLE t2", [])?;
+        drop(conn);
+
+        let (_, summary) = to_csv_incremental(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, Some(&csvdb), &TableFilter::new(vec![], vec![]))?;
+        assert_eq!(summary.removed.len(), 1);
+        assert!(summary.removed.contains(&"t2".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_from_parquetdb() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", [])?;
+        conn.execute("INSERT INTO t VALUES (1, 'Alice')", [])?;
+        drop(conn);
+
+        // SQLite -> parquetdb -> csvdb
+        let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
+            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true, &TableFilter::new(vec![], vec![]),
+        )?;
+
+        let csvdb = to_csv(&parquetdb, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        assert!(csvdb.join("t.csv").exists());
+        let content = fs::read_to_string(csvdb.join("t.csv"))?;
+        assert!(content.contains("Alice"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_csv_natural_sort() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        let conn = SqliteConnection::open(&db_path)?;
+        conn.execute("CREATE TABLE t (id TEXT PRIMARY KEY, val TEXT)", [])?;
+        conn.execute("INSERT INTO t VALUES ('item2', 'b')", [])?;
+        conn.execute("INSERT INTO t VALUES ('item10', 'c')", [])?;
+        conn.execute("INSERT INTO t VALUES ('item1', 'a')", [])?;
+        drop(conn);
+
+        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, true, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let content = fs::read_to_string(csvdb.join("t.csv"))?;
+
+        // Natural sort: item1, item2, item10
+        let pos1 = content.find("item1,").unwrap_or(content.find("item1\"").unwrap());
+        let pos2 = content.find("item2").unwrap();
+        let pos10 = content.find("item10").unwrap();
+        assert!(pos1 < pos2);
+        assert!(pos2 < pos10);
+
+        Ok(())
+    }
 }

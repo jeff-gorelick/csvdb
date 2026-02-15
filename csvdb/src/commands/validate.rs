@@ -596,4 +596,139 @@ mod tests {
         assert!(result.warnings.is_empty());
         Ok(())
     }
+
+    #[test]
+    fn test_validate_parquetdb() -> Result<()> {
+        use rusqlite::Connection;
+
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.sqlite");
+
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", [])?;
+            conn.execute("INSERT INTO t VALUES (2, 'world')", [])?;
+        }
+
+        // Create parquetdb
+        let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
+            &db_path,
+            crate::OrderMode::Pk,
+            crate::NullMode::Marker,
+            None, None, true,
+            &crate::TableFilter::new(vec![], vec![]),
+        )?;
+
+        let result = validate(&parquetdb)?;
+        assert_eq!(result.table_count, 1);
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_parquetdb_missing_parquet() -> Result<()> {
+        let dir = tempdir()?;
+        let parquetdb_dir = dir.path().join("test.parquetdb");
+        fs::create_dir(&parquetdb_dir)?;
+
+        fs::write(
+            parquetdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n",
+        )?;
+        // No t.parquet file
+
+        let result = validate(&parquetdb_dir)?;
+        assert!(result.errors.is_empty());
+        assert!(!result.warnings.is_empty());
+        assert!(result.warnings[0].contains("missing Parquet"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_parquetdb_missing_schema() -> Result<()> {
+        let dir = tempdir()?;
+        let parquetdb_dir = dir.path().join("bad.parquetdb");
+        fs::create_dir(&parquetdb_dir)?;
+        // No schema.sql
+
+        let result = validate(&parquetdb_dir)?;
+        assert!(!result.errors.is_empty());
+        assert!(result.errors[0].contains("schema.sql"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_compressed_csv() -> Result<()> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("test.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
+        )?;
+
+        // Write compressed CSV
+        let gz_path = csvdb_dir.join("t.csv.gz");
+        let f = File::create(&gz_path)?;
+        let mut encoder = GzEncoder::new(f, Compression::default());
+        encoder.write_all(b"id,name\n1,Alice\n2,Bob\n")?;
+        encoder.finish()?;
+
+        let result = validate(&csvdb_dir)?;
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_with_csvdb_toml() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("test.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+        fs::write(
+            csvdb_dir.join("csvdb.toml"),
+            "format_version = \"1\"\norder = \"pk\"\n",
+        )?;
+
+        let result = validate(&csvdb_dir)?;
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_with_bad_format_version() -> Result<()> {
+        let dir = tempdir()?;
+        let csvdb_dir = dir.path().join("test.csvdb");
+        fs::create_dir(&csvdb_dir)?;
+
+        fs::write(
+            csvdb_dir.join("schema.sql"),
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
+        )?;
+        fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
+        fs::write(
+            csvdb_dir.join("csvdb.toml"),
+            "format_version = \"999\"\n",
+        )?;
+
+        let result = validate(&csvdb_dir)?;
+        assert!(result.errors.is_empty());
+        assert!(!result.warnings.is_empty());
+        assert!(result.warnings.iter().any(|w| w.contains("format_version")));
+        Ok(())
+    }
 }

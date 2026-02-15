@@ -306,6 +306,60 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Not a git repository"));
     }
 
+    #[test]
+    fn test_install_skips_existing_non_csvdb() -> Result<()> {
+        let dir = tempdir()?;
+        init_git_repo(dir.path());
+
+        let hooks_dir = dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir)?;
+        // Write a non-csvdb pre-commit hook
+        fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho 'custom linter'")?;
+
+        install(dir.path())?;
+
+        // Should NOT overwrite the existing hook
+        let content = fs::read_to_string(hooks_dir.join("pre-commit"))?;
+        assert!(content.contains("custom linter"));
+        assert!(!content.contains("csvdb"));
+
+        // post-merge should still be installed
+        assert!(hooks_dir.join("post-merge").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_uninstall_no_hooks() -> Result<()> {
+        let dir = tempdir()?;
+        init_git_repo(dir.path());
+
+        // No hooks installed — should not error
+        uninstall(dir.path())?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_git_worktree() -> Result<()> {
+        let dir = tempdir()?;
+        let repo = dir.path().join("repo");
+        fs::create_dir(&repo)?;
+        init_git_repo(&repo);
+
+        // Simulate a worktree by creating a .git file pointing to a gitdir
+        let wt = dir.path().join("worktree");
+        fs::create_dir(&wt)?;
+        let git_dir = dir.path().join("repo").join(".git").join("worktrees").join("wt");
+        fs::create_dir_all(&git_dir)?;
+        fs::write(wt.join(".git"), format!("gitdir: {}", git_dir.display()))?;
+
+        install(&wt)?;
+
+        assert!(git_dir.join("hooks").join("pre-commit").exists());
+        assert!(git_dir.join("hooks").join("post-merge").exists());
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_hooks_executable() -> Result<()> {
