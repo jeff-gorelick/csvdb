@@ -4,7 +4,7 @@ Version-control your relational data like code.
 
 > **Note:** This is beta software. The API and file format may change. Use with caution in production.
 
-SQLite and DuckDB files are binary — git can't diff them, reviewers can't read them, and merges are impossible. csvdb converts your database into a directory of plain-text CSV files + `schema.sql`, fully diffable and round-trip lossless. Convert back to SQLite, DuckDB, or Parquet when you need query performance.
+SQLite and DuckDB files are binary — git can't diff them, reviewers can't read them, and merges are impossible. csvdb converts your database into a diffable directory of CSV files + `schema.sql`, lossless through any roundtrip. Convert back to SQLite, DuckDB, or Parquet when you need query performance.
 
 ```diff
  # git diff myapp.csvdb/rates.csv
@@ -36,7 +36,7 @@ mydb.csvdb/
   orders.csv
 ```
 
-A `.parquetdb` directory has the same structure with Parquet files instead of CSVs:
+A `.parquetdb` directory uses the same layout with Parquet files:
 ```
 mydb.parquetdb/
   csvdb.toml       # format version, export settings
@@ -45,7 +45,7 @@ mydb.parquetdb/
   orders.parquet
 ```
 
-The schema defines the structure. The data files hold the data. `csvdb.toml` records the format version and the settings used to produce the export.
+The schema defines the structure; the data files hold the rows. `csvdb.toml` records the format version and export settings.
 
 ## Why csvdb
 
@@ -139,7 +139,7 @@ Creates `mydb.csvdb/` containing:
 - `schema.sql` - table definitions, indexes, views
 - `*.csv` - one file per table, sorted by primary key
 
-Supports multiple input formats:
+Accepted input formats:
 - **SQLite** (`.sqlite`, `.sqlite3`, `.db`)
 - **DuckDB** (`.duckdb`)
 - **parquetdb** (`.parquetdb` directory)
@@ -200,7 +200,7 @@ Creates `mydb.parquetdb/` containing:
 - `csvdb.toml` - format version and export settings
 - `*.parquet` - one Parquet file per table
 
-Supports multiple input formats:
+Accepted input formats:
 - **SQLite** (`.sqlite`, `.sqlite3`, `.db`)
 - **DuckDB** (`.duckdb`)
 - **csvdb** (`.csvdb` directory)
@@ -227,9 +227,9 @@ csvdb checksum users.parquet
 ```
 
 Computes a SHA-256 checksum of the database content. The checksum is:
-- **Format-independent**: Same data produces same hash regardless of format
-- **Deterministic**: Same data always produces same hash
-- **Content-based**: Includes schema structure and all row data
+- **Format-independent**: same data produces the same hash whether stored as SQLite, DuckDB, csvdb, or Parquet
+- **Deterministic**: same data always produces the same hash
+- **Content-based**: covers schema structure and all row data
 
 Use checksums to verify roundtrip conversions:
 ```bash
@@ -243,7 +243,7 @@ csvdb checksum original.parquetdb/   # a1b2c3... (same!)
 
 ## Primary Key Requirement
 
-By default, every table must have an explicit primary key. Rows are sorted by primary key when exporting to CSV. By enforcing a stable row order, csvdb guarantees that identical data always produces identical CSV files, making git diffs meaningful and noise-free.
+Every table must have a primary key. Rows sort by primary key on export, so identical data always produces identical CSV files and git diffs show only real changes.
 
 ### Tables Without Primary Keys
 
@@ -267,9 +267,7 @@ csvdb to-csvdb mydb.sqlite --order=add-synthetic-key
 
 ## NULL Handling
 
-CSV has no native NULL concept. csvdb uses explicit conventions to preserve NULLs across database roundtrips.
-
-By default, CSV files use `\N` (PostgreSQL convention) to represent NULL values:
+CSV has no native NULL. By default, csvdb uses `\N` (the PostgreSQL convention) to preserve the distinction between NULL and empty string:
 
 ```csv
 "id","name","value"
@@ -278,9 +276,9 @@ By default, CSV files use `\N` (PostgreSQL convention) to represent NULL values:
 "3","hello","\N"   # value is NULL
 ```
 
-This preserves the distinction between NULL and empty string through roundtrips:
-- **SQLite roundtrip**: NULL and empty string are fully preserved
-- **DuckDB roundtrip**: NULL is preserved. **DuckDB limitation**: empty strings may become NULL due to a Rust driver limitation.
+Roundtrip behavior:
+- **SQLite**: NULL and empty string fully preserved
+- **DuckDB**: NULL preserved; empty strings may become NULL (Rust driver limitation)
 
 ### --null-mode
 
@@ -314,44 +312,42 @@ csvdb produces a strict, deterministic CSV dialect:
 | Row ordering | Sorted by primary key (deterministic) |
 | NULL representation | Configurable via `--null-mode` (see above) |
 
-This is mostly RFC 4180 compliant, with one deliberate deviation: line endings use LF instead of CRLF. This produces cleaner git diffs and avoids mixed-endings issues on Unix systems.
+Mostly RFC 4180 compliant, with one deliberate deviation: LF line endings instead of CRLF, for cleaner git diffs. Newlines within field values are preserved inside quoted fields.
 
-Newlines embedded within field values are preserved as-is inside quoted fields. The Rust `csv` crate handles quoting and escaping automatically.
-
-See [FORMAT.md](FORMAT.md) for the full normative format specification.
+See [FORMAT.md](FORMAT.md) for the full format specification.
 
 ## Gotchas
 
 Things that may surprise you on day one:
 
-- **String-based sorting.** PK sort is lexicographic on strings, not numeric. `"10"` sorts before `"2"`. If you need numeric order, use a zero-padded string or an INTEGER primary key (integers sort correctly because shorter strings come first and same-length digit strings sort numerically).
+- **String-based sorting.** PK sort is lexicographic. `"10"` sorts before `"2"`. Use zero-padded strings or INTEGER primary keys for numeric order.
 
-- **Schema inference is limited.** `csvdb init` only infers three types: `INTEGER`, `REAL`, `TEXT`. It won't detect dates, booleans, or blobs. Edit `schema.sql` after init if you need richer types.
+- **Schema inference is limited.** `csvdb init` infers three types: `INTEGER`, `REAL`, `TEXT`. Edit `schema.sql` after init for dates, booleans, or blobs.
 
-- **PK detection stops tracking at 100k values.** During `init`, uniqueness tracking for primary key candidates stops after 100,000 values. If the column was unique up to that point, it's still used as the PK.
+- **PK detection stops at 100k values.** During `init`, uniqueness tracking for primary key candidates stops after 100,000 values. A column unique to that point still becomes the PK.
 
-- **Float precision in checksums.** Values are normalized to 10 decimal places for checksumming. `42.0` normalizes to `42` (integer-valued floats become integers). Very small precision differences across databases are absorbed.
+- **Float precision in checksums.** Values are normalized to 10 decimal places. `42.0` becomes `42`. Small precision differences across databases are absorbed.
 
-- **DuckDB empty string limitation.** Empty strings in TEXT columns may become NULL when round-tripping through DuckDB due to a Rust driver limitation.
+- **DuckDB empty strings.** Empty strings in TEXT columns may become NULL when round-tripping through DuckDB (Rust driver limitation).
 
-- **Blob values are hex strings in CSV.** BLOB data is stored as lowercase hex (e.g. `cafe`). It roundtrips correctly through SQLite and DuckDB.
+- **BLOBs are hex in CSV.** BLOB data is stored as lowercase hex (e.g. `cafe`). Roundtrips correctly through SQLite and DuckDB.
 
-- **No duplicate PK validation during CSV read.** Duplicate primary keys are not caught when reading CSV files. They will cause an error at database INSERT time.
+- **Duplicate PKs are not caught on read.** Duplicate primary keys in CSV files cause errors at INSERT time, not at read time.
 
-- **DuckDB indexes are not exported.** Index metadata is not available from DuckDB sources. Indexes defined in a csvdb `schema.sql` are preserved when converting between csvdb and SQLite, but not when the source is DuckDB.
+- **DuckDB indexes are lost.** DuckDB does not expose index metadata. Indexes in `schema.sql` survive csvdb-to-SQLite conversion but not DuckDB-to-csvdb.
 
-- **Views are not dependency-ordered.** Views are written in alphabetical order. If view A references view B, you may need to manually reorder them in `schema.sql`.
+- **Views are alphabetically ordered.** If view A depends on view B, you may need to reorder them in `schema.sql`.
 
-- **`__csvdb_rowid` is reserved.** The column name `__csvdb_rowid` is used by the `add-synthetic-key` order mode. Don't use it in your own schemas.
+- **`__csvdb_rowid` is reserved.** The `add-synthetic-key` order mode uses this column name.
 
 ## Examples
 
-The [`examples/`](examples/) directory contains ready-to-use examples:
+The [`examples/`](examples/) directory contains:
 
-- **`examples/store.csvdb/`** — A hand-written csvdb directory with two tables, an index, a view, and NULL values
-- **`examples/raw-csvs/`** — Plain CSV files for demonstrating `csvdb init`
+- **`examples/store.csvdb/`** — Two tables, an index, a view, and NULL values
+- **`examples/raw-csvs/`** — Plain CSV files for `csvdb init`
 
-See [`examples/README.md`](examples/README.md) for usage instructions.
+See [`examples/README.md`](examples/README.md) for details.
 
 ## Workflows
 
@@ -374,7 +370,7 @@ csvdb to-sqlite production.csvdb/
 
 ### Deploy to Production
 
-Use csvdb as the source of truth. Track schema and data in git, export to SQLite for deployment:
+Track schema and data in git; export to SQLite for deployment:
 
 ```bash
 # Define your schema and seed data in csvdb format
@@ -502,7 +498,7 @@ ACTUAL=$(csvdb checksum data.sqlite)
 
 ## Python Bindings
 
-csvdb provides native Python bindings via PyO3, giving you direct access to all csvdb functions without subprocess overhead.
+Native Python bindings via PyO3. Call csvdb functions from Python with no subprocess overhead.
 
 ### Install
 
@@ -552,7 +548,7 @@ csvdb.to_csvdb("mydb.sqlite", exclude=["logs"], force=True)
 
 ### DataFrame Support
 
-Read csvdb data directly into pandas, polars, or pyarrow DataFrames with zero-copy Arrow interchange.
+Read csvdb data into pandas, polars, or pyarrow DataFrames through zero-copy Arrow.
 
 ```python
 import csvdb
@@ -600,7 +596,7 @@ uv run pytest
 
 ## Perl Bindings
 
-csvdb provides Perl bindings via a C FFI shared library and `FFI::Platypus`.
+Perl bindings via a C FFI shared library and `FFI::Platypus`.
 
 ### Setup
 
@@ -674,6 +670,8 @@ csvdb/                    # Core library + CLI binary
       validate.rs        # Structural integrity checks
       diff.rs            # Compare two databases
       sql.rs             # Read-only SQL queries
+      read.rs            # Read tables as Arrow RecordBatches
+      write.rs           # Write Arrow tables to csvdb
     core/
       schema.rs          # Parse/emit schema.sql, type normalization
       table.rs           # Row operations, PK handling
@@ -681,6 +679,7 @@ csvdb/                    # Core library + CLI binary
       input.rs           # Input format detection
 csvdb-python/             # Python bindings (PyO3)
   src/lib.rs
+  csvdb.pyi                # Type stubs
   examples/
     basic_usage.py
     advanced_usage.py
@@ -689,10 +688,9 @@ csvdb-ffi/                # C FFI for Perl and other languages
 perl/                     # Perl module (FFI::Platypus)
   lib/Csvdb.pm
   examples/basic_usage.pl
-tests/functional/         # Python functional tests
+tests/functional/         # CLI functional tests
   conftest.py
-  test_commands.py
-  test_performance.py
+  test_*.py
   pyproject.toml
 ```
 
@@ -714,7 +712,7 @@ cargo run -p csvdb -- checksum mydb.sqlite
 # Rust unit tests
 cargo test
 
-# Python functional tests (189 tests)
+# Functional tests
 cd tests/functional
 uv run pytest
 
