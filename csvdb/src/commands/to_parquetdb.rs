@@ -56,6 +56,10 @@ pub fn to_parquetdb(
     let conn = Connection::open_in_memory()
         .context("Failed to create in-memory DuckDB connection")?;
 
+    // Explicitly load parquet extension (autoload can fail on some platforms)
+    conn.execute("INSTALL parquet", []).ok();
+    conn.execute("LOAD parquet", []).ok();
+
     let schema = match input_format {
         InputFormat::Sqlite => load_sqlite(&conn, input_path)?,
         InputFormat::DuckDb => load_duckdb(&conn, input_path)?,
