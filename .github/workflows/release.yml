@@ -155,6 +155,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   # Publish csvdb crate to crates.io
   crates-publish:
@@ -172,7 +174,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish csvdb
-        run: cargo publish -p csvdb --allow-dirty
+        run: |
+          OUTPUT=$(cargo publish -p csvdb --allow-dirty 2>&1) && exit 0
+          if echo "$OUTPUT" | grep -q "already uploaded"; then
+            echo "Already published, skipping"
+          else
+            echo "$OUTPUT"
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -232,3 +241,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
