@@ -172,7 +172,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish csvdb
-        run: cargo publish -p csvdb
+        run: cargo publish -p csvdb --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
