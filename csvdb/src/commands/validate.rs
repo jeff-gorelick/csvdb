@@ -50,8 +50,8 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
             Some(s)
         }
         Err(e) => {
-            let msg = format!("schema.sql: {}", e);
-            println!("  schema.sql .............. ERROR: {}", e);
+            let msg = format!("schema.sql: {e}");
+            println!("  schema.sql .............. ERROR: {e}");
             errors.push(msg);
             None
         }
@@ -78,8 +78,8 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
             let csv_path = match csv_path {
                 Some(p) => p,
                 None => {
-                    let msg = format!("{}: missing CSV file", table_name);
-                    println!("  {}.csv .............. WARN: missing CSV file", table_name);
+                    let msg = format!("{table_name}: missing CSV file");
+                    println!("  {table_name}.csv .............. WARN: missing CSV file");
                     warnings.push(msg);
                     continue;
                 }
@@ -99,13 +99,13 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
                             count,
                             examples.join("; ")
                         );
-                        println!("  {} .............. WARN: {} duplicate PK(s)", display_name, count);
+                        println!("  {display_name} .............. WARN: {count} duplicate PK(s)");
                         warnings.push(msg);
                     }
                 }
                 Err(e) => {
-                    let msg = format!("{}: {}", display_name, e);
-                    println!("  {} .............. WARN: {}", display_name, e);
+                    let msg = format!("{display_name}: {e}");
+                    println!("  {display_name} .............. WARN: {e}");
                     warnings.push(msg);
                 }
             }
@@ -123,17 +123,16 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
                 if let Some(ref v) = config.format_version {
                     if v != CURRENT_FORMAT_VERSION {
                         let msg = format!(
-                            "csvdb.toml: unknown format_version '{}' (expected '{}')",
-                            v, CURRENT_FORMAT_VERSION
+                            "csvdb.toml: unknown format_version '{v}' (expected '{CURRENT_FORMAT_VERSION}')"
                         );
-                        println!("  csvdb.toml .............. WARN: {}", msg);
+                        println!("  csvdb.toml .............. WARN: {msg}");
                         warnings.push(msg);
                     }
                 }
             }
             Err(e) => {
-                let msg = format!("csvdb.toml: {}", e);
-                println!("  csvdb.toml .............. WARN: {}", e);
+                let msg = format!("csvdb.toml: {e}");
+                println!("  csvdb.toml .............. WARN: {e}");
                 warnings.push(msg);
             }
         }
@@ -142,7 +141,7 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
     // 6. Summary
     println!();
     if errors.is_empty() && warnings.is_empty() {
-        println!("{} tables validated, 0 warnings", table_count);
+        println!("{table_count} tables validated, 0 warnings");
     } else if errors.is_empty() {
         println!(
             "{} tables validated, {} warning{}",
@@ -268,8 +267,8 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
             Some(s)
         }
         Err(e) => {
-            let msg = format!("schema.sql: {}", e);
-            println!("  schema.sql .............. ERROR: {}", e);
+            let msg = format!("schema.sql: {e}");
+            println!("  schema.sql .............. ERROR: {e}");
             errors.push(msg);
             None
         }
@@ -287,7 +286,7 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
         let parquet_results: Vec<_> = parquet_entries
             .par_iter()
             .map(|(table_name, table_schema)| {
-                let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+                let parquet_path = parquetdb_dir.join(format!("{table_name}.parquet"));
                 let result = if parquet_path.exists() {
                     Some(validate_parquet(&parquet_path, table_schema))
                 } else {
@@ -300,16 +299,16 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
         for (table_name, result) in parquet_results {
             match result {
                 None => {
-                    let msg = format!("{}: missing Parquet file", table_name);
-                    println!("  {}.parquet .............. WARN: missing Parquet file", table_name);
+                    let msg = format!("{table_name}: missing Parquet file");
+                    println!("  {table_name}.parquet .............. WARN: missing Parquet file");
                     warnings.push(msg);
                 }
                 Some(Ok(row_count)) => {
-                    println!("  {}.parquet .............. OK ({} rows)", table_name, row_count);
+                    println!("  {table_name}.parquet .............. OK ({row_count} rows)");
                 }
                 Some(Err(e)) => {
-                    let msg = format!("{}.parquet: {}", table_name, e);
-                    println!("  {}.parquet .............. WARN: {}", table_name, e);
+                    let msg = format!("{table_name}.parquet: {e}");
+                    println!("  {table_name}.parquet .............. WARN: {e}");
                     warnings.push(msg);
                 }
             }
@@ -327,17 +326,16 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
                 if let Some(ref v) = config.format_version {
                     if v != CURRENT_FORMAT_VERSION {
                         let msg = format!(
-                            "csvdb.toml: unknown format_version '{}' (expected '{}')",
-                            v, CURRENT_FORMAT_VERSION
+                            "csvdb.toml: unknown format_version '{v}' (expected '{CURRENT_FORMAT_VERSION}')"
                         );
-                        println!("  csvdb.toml .............. WARN: {}", msg);
+                        println!("  csvdb.toml .............. WARN: {msg}");
                         warnings.push(msg);
                     }
                 }
             }
             Err(e) => {
-                let msg = format!("csvdb.toml: {}", e);
-                println!("  csvdb.toml .............. WARN: {}", e);
+                let msg = format!("csvdb.toml: {e}");
+                println!("  csvdb.toml .............. WARN: {e}");
                 warnings.push(msg);
             }
         }
@@ -346,7 +344,7 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
     // 4. Summary
     println!();
     if errors.is_empty() && warnings.is_empty() {
-        println!("{} tables validated, 0 warnings", table_count);
+        println!("{table_count} tables validated, 0 warnings");
     } else if errors.is_empty() {
         println!(
             "{} tables validated, {} warning{}",
@@ -391,13 +389,13 @@ fn validate_parquet(
         .unwrap_or("parquet_table");
 
     conn.execute(
-        &format!("CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}') LIMIT 0", table_name, path_str),
+        &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}') LIMIT 0"),
         [],
     ).with_context(|| format!("Failed to read parquet file: {}", parquet_path.display()))?;
 
     // Get column count from the created table
     let parquet_cols: usize = conn.query_row(
-        &format!("SELECT COUNT(*) FROM pragma_table_info('{}')", table_name),
+        &format!("SELECT COUNT(*) FROM pragma_table_info('{table_name}')"),
         [],
         |row| row.get(0),
     )?;
@@ -406,15 +404,13 @@ fn validate_parquet(
 
     if parquet_cols != schema_cols {
         anyhow::bail!(
-            "column count mismatch: Parquet has {} columns, schema expects {}",
-            parquet_cols,
-            schema_cols
+            "column count mismatch: Parquet has {parquet_cols} columns, schema expects {schema_cols}"
         );
     }
 
     // Count rows
     let row_count: usize = conn.query_row(
-        &format!("SELECT COUNT(*) FROM read_parquet('{}')", path_str),
+        &format!("SELECT COUNT(*) FROM read_parquet('{path_str}')"),
         [],
         |row| row.get(0),
     )?;

@@ -50,7 +50,7 @@ fn resolve_output_dir(input_path: &Path, output_dir: Option<&Path>) -> PathBuf {
             input_path
                 .parent()
                 .unwrap_or(Path::new("."))
-                .join(format!("{}.csvdb", stem))
+                .join(format!("{stem}.csvdb"))
         }
     }
 }
@@ -171,7 +171,7 @@ pub fn to_csv_incremental(input_path: &Path, order_mode: OrderMode, null_mode: N
                     Table::from_sqlite_with_order(&conn, table_schema, order_mode, null_mode)?
                 };
                 for warning in &result.warnings {
-                    eprintln!("Warning: {}", warning);
+                    eprintln!("Warning: {warning}");
                 }
 
                 let cksum = table_checksum(&result.table);
@@ -214,7 +214,7 @@ pub fn to_csv_incremental(input_path: &Path, order_mode: OrderMode, null_mode: N
                     Table::from_duckdb_with_order(&conn, table_schema, order_mode, null_mode)?
                 };
                 for warning in &result.warnings {
-                    eprintln!("Warning: {}", warning);
+                    eprintln!("Warning: {warning}");
                 }
 
                 let cksum = table_checksum(&result.table);
@@ -285,10 +285,10 @@ fn make_progress_bar(len: u64) -> ProgressBar {
 
 fn write_table(table: &Table, csvdb_dir: &Path, table_name: &str, natural_sort: bool, compress: bool) -> Result<()> {
     if compress {
-        let gz_path = csvdb_dir.join(format!("{}.csv.gz", table_name));
+        let gz_path = csvdb_dir.join(format!("{table_name}.csv.gz"));
         write_table_csv_gz(table, &gz_path, natural_sort)
     } else {
-        let csv_path = csvdb_dir.join(format!("{}.csv", table_name));
+        let csv_path = csvdb_dir.join(format!("{table_name}.csv"));
         write_table_csv_sorted(table, &csv_path, natural_sort)
     }
 }
@@ -319,7 +319,7 @@ fn export_sqlite(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
         };
 
         for warning in &result.warnings {
-            eprintln!("Warning: {}", warning);
+            eprintln!("Warning: {warning}");
         }
 
         write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
@@ -356,7 +356,7 @@ fn export_duckdb(db_path: &Path, csvdb_dir: &Path, order_mode: OrderMode, null_m
         };
 
         for warning in &result.warnings {
-            eprintln!("Warning: {}", warning);
+            eprintln!("Warning: {warning}");
         }
 
         write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
@@ -381,13 +381,13 @@ fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMo
         let stmt = stmt.trim();
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
             conn.execute(stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
     // Load parquet data
     for table_name in schema.tables.keys() {
-        let parquet_path = parquetdb_path.join(format!("{}.parquet", table_name));
+        let parquet_path = parquetdb_path.join(format!("{table_name}.parquet"));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -395,8 +395,7 @@ fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMo
 
             conn.execute(
                 &format!(
-                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
-                    table_name, path_str
+                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
                 ),
                 [],
             )?;
@@ -423,7 +422,7 @@ fn export_parquetdb(parquetdb_path: &Path, csvdb_dir: &Path, order_mode: OrderMo
         };
 
         for warning in &result.warnings {
-            eprintln!("Warning: {}", warning);
+            eprintln!("Warning: {warning}");
         }
 
         write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;
@@ -445,7 +444,7 @@ fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: Orde
         .unwrap_or("table");
 
     if !filter.matches(table_name) {
-        bail!("Table '{}' is excluded by filter", table_name);
+        bail!("Table '{table_name}' is excluded by filter");
     }
 
     let abs_path = parquet_path.canonicalize()?;
@@ -455,8 +454,7 @@ fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: Orde
     // Create table from parquet
     conn.execute(
         &format!(
-            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
-            table_name, path_str
+            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
         ),
         [],
     )?;
@@ -479,7 +477,7 @@ fn export_single_parquet(parquet_path: &Path, csvdb_dir: &Path, order_mode: Orde
     };
 
     for warning in &result.warnings {
-        eprintln!("Warning: {}", warning);
+        eprintln!("Warning: {warning}");
     }
 
     write_table(&result.table, csvdb_dir, table_name, natural_sort, compress)?;

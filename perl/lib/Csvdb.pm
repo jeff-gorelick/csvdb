@@ -47,11 +47,11 @@ $ffi->attach(csvdb_version     => []                              => 'string');
 $ffi->attach(csvdb_last_error  => []                              => 'string');
 $ffi->attach(csvdb_free_string => ['opaque']                      => 'void');
 
-$ffi->attach(csvdb_to_csvdb    => ['string','string','string','string','int'] => 'opaque');
-$ffi->attach(csvdb_to_sqlite   => ['string','string','int']       => 'opaque');
-$ffi->attach(csvdb_to_duckdb   => ['string','string','int']       => 'opaque');
-$ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int'] => 'opaque');
-$ffi->attach(csvdb_checksum    => ['string']                      => 'opaque');
+$ffi->attach(csvdb_to_csvdb    => ['string','string','string','string','int','string','string'] => 'opaque');
+$ffi->attach(csvdb_to_sqlite   => ['string','string','int','string','string']       => 'opaque');
+$ffi->attach(csvdb_to_duckdb   => ['string','string','int','string','string']       => 'opaque');
+$ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int','string','string'] => 'opaque');
+$ffi->attach(csvdb_checksum    => ['string','string','string']    => 'opaque');
 $ffi->attach(csvdb_diff        => ['string','string','int','string','string'] => 'int');
 $ffi->attach(csvdb_validate    => ['string']                      => 'int');
 $ffi->attach(csvdb_sql         => ['string','string']             => 'opaque');
@@ -82,23 +82,29 @@ sub to_csvdb {
     my $order     = $args{order}     // undef;
     my $null_mode = $args{null_mode} // undef;
     my $force     = $args{force}     ? 1 : 0;
-    return _read_string(csvdb_to_csvdb($input, $output, $order, $null_mode, $force));
+    my $tables    = $args{tables}    // undef;
+    my $exclude   = $args{exclude}   // undef;
+    return _read_string(csvdb_to_csvdb($input, $output, $order, $null_mode, $force, $tables, $exclude));
 }
 
 sub to_sqlite {
     my (%args) = @_;
-    my $input  = $args{input}  // croak "input is required";
-    my $output = $args{output} // undef;
-    my $force  = $args{force}  ? 1 : 0;
-    return _read_string(csvdb_to_sqlite($input, $output, $force));
+    my $input   = $args{input}   // croak "input is required";
+    my $output  = $args{output}  // undef;
+    my $force   = $args{force}   ? 1 : 0;
+    my $tables  = $args{tables}  // undef;
+    my $exclude = $args{exclude} // undef;
+    return _read_string(csvdb_to_sqlite($input, $output, $force, $tables, $exclude));
 }
 
 sub to_duckdb {
     my (%args) = @_;
-    my $input  = $args{input}  // croak "input is required";
-    my $output = $args{output} // undef;
-    my $force  = $args{force}  ? 1 : 0;
-    return _read_string(csvdb_to_duckdb($input, $output, $force));
+    my $input   = $args{input}   // croak "input is required";
+    my $output  = $args{output}  // undef;
+    my $force   = $args{force}   ? 1 : 0;
+    my $tables  = $args{tables}  // undef;
+    my $exclude = $args{exclude} // undef;
+    return _read_string(csvdb_to_duckdb($input, $output, $force, $tables, $exclude));
 }
 
 sub to_parquetdb {
@@ -108,13 +114,17 @@ sub to_parquetdb {
     my $order     = $args{order}     // undef;
     my $null_mode = $args{null_mode} // undef;
     my $force     = $args{force}     ? 1 : 0;
-    return _read_string(csvdb_to_parquetdb($input, $output, $order, $null_mode, $force));
+    my $tables    = $args{tables}    // undef;
+    my $exclude   = $args{exclude}   // undef;
+    return _read_string(csvdb_to_parquetdb($input, $output, $order, $null_mode, $force, $tables, $exclude));
 }
 
 sub checksum {
     my (%args) = @_;
-    my $input = $args{input} // croak "input is required";
-    return _read_string(csvdb_checksum($input));
+    my $input   = $args{input}   // croak "input is required";
+    my $tables  = $args{tables}  // undef;
+    my $exclude = $args{exclude} // undef;
+    return _read_string(csvdb_checksum($input, $tables, $exclude));
 }
 
 sub diff {

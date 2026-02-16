@@ -36,7 +36,7 @@ pub fn watch(
     eprintln!("Watching: {}", path.display());
     match rebuild(path, target, order, null_mode, order_by, filter) {
         Ok(output) => eprintln!("Built: {}", output.display()),
-        Err(e) => eprintln!("Build error: {:#}", e),
+        Err(e) => eprintln!("Build error: {e:#}"),
     }
 
     // Set up file watcher
@@ -55,7 +55,7 @@ pub fn watch(
                 }
             }
             Ok(Err(e)) => {
-                eprintln!("Watch error: {}", e);
+                eprintln!("Watch error: {e}");
                 continue;
             }
             Err(_) => {
@@ -82,7 +82,7 @@ pub fn watch(
         eprintln!("Change detected, rebuilding...");
         match rebuild(path, target, order, null_mode, order_by, filter) {
             Ok(output) => eprintln!("Built: {}", output.display()),
-            Err(e) => eprintln!("Build error: {:#}", e),
+            Err(e) => eprintln!("Build error: {e:#}"),
         }
         eprintln!("Waiting for changes...");
     }

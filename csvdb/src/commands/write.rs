@@ -42,9 +42,9 @@ pub fn write_csvdb_from_arrow(
 
     // Write CSV files
     for (name, batches) in &tables {
-        let csv_path = output.join(format!("{}.csv", name));
+        let csv_path = output.join(format!("{name}.csv"));
         write_arrow_to_csv(&csv_path, batches)
-            .with_context(|| format!("Failed to write table: {}", name))?;
+            .with_context(|| format!("Failed to write table: {name}"))?;
     }
 
     // Write config
@@ -74,7 +74,7 @@ fn arrow_schema_to_create_table(
     name: &str,
     schema: &arrow::datatypes::Schema,
 ) -> String {
-    let mut sql = format!("CREATE TABLE \"{}\" (\n", name);
+    let mut sql = format!("CREATE TABLE \"{name}\" (\n");
 
     let fields = schema.fields();
     let pk_col = detect_pk(name, schema);
@@ -109,12 +109,8 @@ fn detect_pk(table_name: &str, schema: &arrow::datatypes::Schema) -> Option<Stri
     }
 
     // Check for "<table>_id" column (singular form)
-    let singular = if table_name.ends_with('s') {
-        &table_name[..table_name.len() - 1]
-    } else {
-        table_name
-    };
-    let expected = format!("{}_id", singular);
+    let singular = table_name.strip_suffix('s').unwrap_or(table_name);
+    let expected = format!("{singular}_id");
     if fields.iter().any(|f| f.name() == &expected) {
         return Some(expected);
     }

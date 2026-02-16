@@ -36,7 +36,7 @@ pub fn to_parquetdb(
             input_path
                 .parent()
                 .unwrap_or(Path::new("."))
-                .join(format!("{}.parquetdb", stem))
+                .join(format!("{stem}.parquetdb"))
         }
     };
 
@@ -78,7 +78,7 @@ pub fn to_parquetdb(
 
         pb.set_message(table_name.clone());
 
-        let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+        let parquet_path = parquetdb_dir.join(format!("{table_name}.parquet"));
         let abs_path = parquet_path
             .canonicalize()
             .unwrap_or_else(|_| parquet_path.clone());
@@ -87,18 +87,17 @@ pub fn to_parquetdb(
 
         // Build ORDER BY clause based on order_by or order_mode
         let order_clause = if let Some(custom_order) = order_by {
-            format!("ORDER BY {}", custom_order)
+            format!("ORDER BY {custom_order}")
         } else {
             build_order_clause(&schema.tables[table_name], order_mode)
         };
 
         let copy_sql = format!(
-            "COPY (SELECT * FROM \"{}\" {}) TO '{}' (FORMAT PARQUET)",
-            table_name, order_clause, path_str
+            "COPY (SELECT * FROM \"{table_name}\" {order_clause}) TO '{path_str}' (FORMAT PARQUET)"
         );
 
         conn.execute(&copy_sql, [])
-            .with_context(|| format!("Failed to export table {} to parquet", table_name))?;
+            .with_context(|| format!("Failed to export table {table_name} to parquet"))?;
 
         pb.inc(1);
     }
@@ -170,7 +169,7 @@ fn build_order_clause(
                 let pk_cols: Vec<String> = table_schema
                     .pk_columns
                     .iter()
-                    .map(|c| format!("\"{}\"", c))
+                    .map(|c| format!("\"{c}\""))
                     .collect();
                 format!("ORDER BY {}", pk_cols.join(", "))
             }
@@ -200,13 +199,12 @@ fn load_sqlite(conn: &Connection, path: &Path) -> Result<Schema> {
     let abs_path = path.canonicalize()?;
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
 
-    conn.execute(&format!("ATTACH '{}' AS src (TYPE SQLITE)", path_str), [])?;
+    conn.execute(&format!("ATTACH '{path_str}' AS src (TYPE SQLITE)"), [])?;
 
     for table_name in schema.tables.keys() {
         conn.execute(
             &format!(
-                "CREATE TABLE \"{}\" AS SELECT * FROM src.\"{}\"",
-                table_name, table_name
+                "CREATE TABLE \"{table_name}\" AS SELECT * FROM src.\"{table_name}\""
             ),
             [],
         )?;
@@ -231,13 +229,12 @@ fn load_duckdb(conn: &Connection, path: &Path) -> Result<Schema> {
     // Strip Windows UNC prefix (//?/) that canonicalize() adds
     let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
-    conn.execute(&format!("ATTACH '{}' AS src", path_str), [])?;
+    conn.execute(&format!("ATTACH '{path_str}' AS src"), [])?;
 
     for table_name in schema.tables.keys() {
         conn.execute(
             &format!(
-                "CREATE TABLE \"{}\" AS SELECT * FROM src.\"{}\"",
-                table_name, table_name
+                "CREATE TABLE \"{table_name}\" AS SELECT * FROM src.\"{table_name}\""
             ),
             [],
         )?;
@@ -260,12 +257,12 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<Schema> {
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
     for table_name in schema.tables_in_fk_order()? {
-        let csv_path = path.join(format!("{}.csv", table_name));
+        let csv_path = path.join(format!("{table_name}.csv"));
         if csv_path.exists() {
             let abs_path = csv_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -273,8 +270,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<Schema> {
 
             conn.execute(
                 &format!(
-                    "COPY \"{}\" FROM '{}' (HEADER, NULL '\\N')",
-                    table_name, path_str
+                    "COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"
                 ),
                 [],
             )?;
@@ -296,12 +292,12 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<Schema> {
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
     for table_name in schema.tables_in_fk_order()? {
-        let parquet_path = path.join(format!("{}.parquet", table_name));
+        let parquet_path = path.join(format!("{table_name}.parquet"));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -309,8 +305,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<Schema> {
 
             conn.execute(
                 &format!(
-                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
-                    table_name, path_str
+                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
                 ),
                 [],
             )?;
@@ -333,8 +328,7 @@ fn load_single_parquet(conn: &Connection, path: &Path) -> Result<Schema> {
     // Create table from parquet
     conn.execute(
         &format!(
-            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
-            table_name, path_str
+            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
         ),
         [],
     )?;
@@ -388,8 +382,7 @@ mod tests {
         let path_str = parquet_path.to_string_lossy().replace('\\', "/");
         conn.execute(
             &format!(
-                "CREATE TABLE users AS SELECT * FROM read_parquet('{}')",
-                path_str
+                "CREATE TABLE users AS SELECT * FROM read_parquet('{path_str}')"
             ),
             [],
         )?;
@@ -477,7 +470,7 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         let abs = pdb2.join("t.parquet").canonicalize()?;
         let p = abs.to_string_lossy().replace('\\', "/");
-        conn.execute(&format!("CREATE TABLE t AS SELECT * FROM read_parquet('{}')", p), [])?;
+        conn.execute(&format!("CREATE TABLE t AS SELECT * FROM read_parquet('{p}')"), [])?;
         let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(val, "round");
         Ok(())

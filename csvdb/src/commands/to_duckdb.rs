@@ -49,7 +49,7 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
             .strip_suffix(".csvdb")
             .or_else(|| stem.strip_suffix(".parquetdb"))
             .unwrap_or(stem);
-        let db_name = format!("{}.duckdb", stem);
+        let db_name = format!("{stem}.duckdb");
         input_path
             .parent()
             .unwrap_or(Path::new("."))
@@ -78,7 +78,7 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
         if !stmt.is_empty() {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
@@ -111,11 +111,10 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
 
             // DuckDB natively reads .csv.gz files
             let copy_sql = format!(
-                "COPY \"{}\" FROM '{}' (HEADER, NULL '\\N')",
-                table_name, path_str
+                "COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"
             );
             conn.execute(&copy_sql, [])
-                .with_context(|| format!("Failed to import CSV for table {}", table_name))?;
+                .with_context(|| format!("Failed to import CSV for table {table_name}"))?;
         }
         pb.inc(1);
     }

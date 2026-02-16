@@ -35,7 +35,7 @@ fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool
     let upper = trimmed.to_uppercase();
     let first_word = upper.split_whitespace().next().unwrap_or("");
     if first_word != "SELECT" && first_word != "WITH" {
-        bail!("Only SELECT queries are supported. Got: {}", first_word);
+        bail!("Only SELECT queries are supported. Got: {first_word}");
     }
 
     let input_format = InputFormat::from_path(path)?;
@@ -48,7 +48,7 @@ fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool
     // Execute query using Arrow interface for reliable column metadata
     let mut stmt = conn
         .prepare(trimmed)
-        .with_context(|| format!("Failed to prepare query: {}", trimmed))?;
+        .with_context(|| format!("Failed to prepare query: {trimmed}"))?;
 
     let arrow = stmt
         .query_arrow([])
@@ -97,7 +97,7 @@ pub fn sql_query_arrow(path: &Path, query: &str) -> Result<Vec<arrow::record_bat
     let upper = trimmed.to_uppercase();
     let first_word = upper.split_whitespace().next().unwrap_or("");
     if first_word != "SELECT" && first_word != "WITH" {
-        bail!("Only SELECT queries are supported. Got: {}", first_word);
+        bail!("Only SELECT queries are supported. Got: {first_word}");
     }
 
     let input_format = InputFormat::from_path(path)?;
@@ -109,7 +109,7 @@ pub fn sql_query_arrow(path: &Path, query: &str) -> Result<Vec<arrow::record_bat
 
     let mut stmt = conn
         .prepare(trimmed)
-        .with_context(|| format!("Failed to prepare query: {}", trimmed))?;
+        .with_context(|| format!("Failed to prepare query: {trimmed}"))?;
 
     let arrow = stmt
         .query_arrow([])
@@ -155,7 +155,7 @@ fn load_sqlite(conn: &Connection, path: &Path) -> Result<()> {
     let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
     conn.execute(
-        &format!("ATTACH '{}' AS src (TYPE SQLITE, READ_ONLY)", path_str),
+        &format!("ATTACH '{path_str}' AS src (TYPE SQLITE, READ_ONLY)"),
         [],
     )?;
     conn.execute("USE src", [])?;
@@ -168,7 +168,7 @@ fn load_duckdb(conn: &Connection, path: &Path) -> Result<()> {
     let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
     conn.execute(
-        &format!("ATTACH '{}' AS src (READ_ONLY)", path_str),
+        &format!("ATTACH '{path_str}' AS src (READ_ONLY)"),
         [],
     )?;
     conn.execute("USE src", [])?;
@@ -185,7 +185,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<()> {
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE") {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
@@ -197,8 +197,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<()> {
 
             conn.execute(
                 &format!(
-                    "COPY \"{}\" FROM '{}' (HEADER, NULL '\\N')",
-                    table_name, path_str
+                    "COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"
                 ),
                 [],
             )?;
@@ -218,12 +217,12 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<()> {
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE") {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
     for table_name in schema.tables_in_fk_order()? {
-        let parquet_path = path.join(format!("{}.parquet", table_name));
+        let parquet_path = path.join(format!("{table_name}.parquet"));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -231,8 +230,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<()> {
 
             conn.execute(
                 &format!(
-                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
-                    table_name, path_str
+                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
                 ),
                 [],
             )?;
@@ -254,8 +252,7 @@ fn load_single_parquet(conn: &Connection, path: &Path) -> Result<()> {
 
     conn.execute(
         &format!(
-            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
-            table_name, path_str
+            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
         ),
         [],
     )?;
@@ -322,11 +319,11 @@ pub(crate) fn arrow_value_to_string(col: &dyn arrow::array::Array, row: usize) -
         }
         DataType::Binary => {
             let arr = col.as_any().downcast_ref::<BinaryArray>().unwrap();
-            arr.value(row).iter().map(|b| format!("{:02x}", b)).collect()
+            arr.value(row).iter().map(|b| format!("{b:02x}")).collect()
         }
         DataType::LargeBinary => {
             let arr = col.as_any().downcast_ref::<LargeBinaryArray>().unwrap();
-            arr.value(row).iter().map(|b| format!("{:02x}", b)).collect()
+            arr.value(row).iter().map(|b| format!("{b:02x}")).collect()
         }
         _ => {
             // Fallback: use Arrow's display formatting

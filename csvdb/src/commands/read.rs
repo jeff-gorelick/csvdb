@@ -66,11 +66,11 @@ fn get_table_names(conn: &Connection) -> Result<Vec<String>> {
 }
 
 fn query_table_arrow(conn: &Connection, table_name: &str) -> Result<Vec<RecordBatch>> {
-    let query = format!("SELECT * FROM \"{}\"", table_name);
+    let query = format!("SELECT * FROM \"{table_name}\"");
     let mut stmt = conn.prepare(&query)
-        .with_context(|| format!("Failed to prepare query for table: {}", table_name))?;
+        .with_context(|| format!("Failed to prepare query for table: {table_name}"))?;
     let arrow = stmt.query_arrow([])
-        .with_context(|| format!("Failed to query table: {}", table_name))?;
+        .with_context(|| format!("Failed to query table: {table_name}"))?;
     let batches: Vec<RecordBatch> = arrow.collect();
     Ok(batches)
 }

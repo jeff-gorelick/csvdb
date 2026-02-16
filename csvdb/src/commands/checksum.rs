@@ -146,13 +146,13 @@ fn checksum_parquetdb(parquetdb_dir: &Path, filter: &TableFilter) -> Result<Stri
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
     // Load parquet data in FK dependency order
     for table_name in schema.tables_in_fk_order()? {
-        let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+        let parquet_path = parquetdb_dir.join(format!("{table_name}.parquet"));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -160,8 +160,7 @@ fn checksum_parquetdb(parquetdb_dir: &Path, filter: &TableFilter) -> Result<Stri
 
             conn.execute(
                 &format!(
-                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
-                    table_name, path_str
+                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
                 ),
                 [],
             )?;
@@ -203,7 +202,7 @@ fn checksum_parquet(parquet_path: &Path, filter: &TableFilter) -> Result<String>
         .unwrap_or("table");
 
     if !filter.matches(table_name) {
-        anyhow::bail!("Table '{}' is excluded by filter", table_name);
+        anyhow::bail!("Table '{table_name}' is excluded by filter");
     }
 
     let abs_path = parquet_path.canonicalize()?;
@@ -213,8 +212,7 @@ fn checksum_parquet(parquet_path: &Path, filter: &TableFilter) -> Result<String>
     // Create table from parquet
     conn.execute(
         &format!(
-            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
-            table_name, path_str
+            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
         ),
         [],
     )?;
@@ -364,7 +362,7 @@ pub fn normalize_value(value: &str) -> String {
             return (f as i64).to_string();
         }
         // Round to 10 decimal places to avoid precision issues
-        return format!("{:.10}", f)
+        return format!("{f:.10}")
             .trim_end_matches('0')
             .trim_end_matches('.')
             .to_string();
