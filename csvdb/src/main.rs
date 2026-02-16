@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
@@ -356,7 +358,7 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("Error: {:#}", e);
+            eprintln!("Error: {e:#}");
             ExitCode::FAILURE
         }
     }
@@ -395,7 +397,7 @@ fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Opt
     (order, null_mode, order_by)
 }
 
-fn run_init(source: &PathBuf, output: Option<&Path>, force: bool, filter: &TableFilter, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
+fn run_init(source: &Path, output: Option<&Path>, force: bool, filter: &TableFilter, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
     let config = init::InferConfig {
         detect_pk: !no_pk_detection,
         detect_fk: !no_fk_detection,
@@ -406,7 +408,7 @@ fn run_init(source: &PathBuf, output: Option<&Path>, force: bool, filter: &Table
 
     // Print warnings
     for warning in &result.warnings {
-        eprintln!("Warning: {}", warning);
+        eprintln!("Warning: {warning}");
     }
 
     // Print summary
@@ -414,7 +416,7 @@ fn run_init(source: &PathBuf, output: Option<&Path>, force: bool, filter: &Table
     println!();
     for table in &result.tables {
         let pk_info = match &table.suggested_pk {
-            Some(pk) => format!("PK: {}", pk),
+            Some(pk) => format!("PK: {pk}"),
             None => "no PK".to_string(),
         };
         let fk_count = table.suggested_fks.len();
@@ -436,7 +438,7 @@ fn run_init(source: &PathBuf, output: Option<&Path>, force: bool, filter: &Table
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_csvdb(input: &PathBuf, output: Option<&Path>, order: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_csvdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
     // Warn about lossy null modes unless in pipe mode (quiet)
     if null_mode.is_lossy() && !pipe {
         match null_mode {
@@ -458,7 +460,7 @@ fn run_to_csvdb(input: &PathBuf, output: Option<&Path>, order: OrderMode, null_m
         let stem = input.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("csvdb");
-        output_path = Some(std::env::temp_dir().join(format!("{}.csvdb", stem)));
+        output_path = Some(std::env::temp_dir().join(format!("{stem}.csvdb")));
         output_path.as_deref()
     } else {
         output
@@ -470,20 +472,20 @@ fn run_to_csvdb(input: &PathBuf, output: Option<&Path>, order: OrderMode, null_m
         // Quiet mode: just output the path for piping
         // Use forward slashes for cross-platform compatibility in pipes
         let path_str = csvdir.to_string_lossy().replace('\\', "/");
-        println!("{}", path_str);
+        println!("{path_str}");
     } else {
         println!("Created: {}", csvdir.display());
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_csvdb_incremental(input: &PathBuf, output: Option<&Path>, order: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, pipe: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_csvdb_incremental(input: &Path, output: Option<&Path>, order: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, pipe: bool, filter: &TableFilter) -> Result<ExitCode> {
     let output_path: Option<PathBuf>;
     let effective_output = if pipe && output.is_none() {
         let stem = input.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("csvdb");
-        output_path = Some(std::env::temp_dir().join(format!("{}.csvdb", stem)));
+        output_path = Some(std::env::temp_dir().join(format!("{stem}.csvdb")));
         output_path.as_deref()
     } else {
         output
@@ -493,45 +495,45 @@ fn run_to_csvdb_incremental(input: &PathBuf, output: Option<&Path>, order: Order
 
     if pipe {
         let path_str = csvdir.to_string_lossy().replace('\\', "/");
-        println!("{}", path_str);
+        println!("{path_str}");
     } else {
         // Print incremental summary
         for name in &summary.unchanged {
-            eprintln!("  {}: unchanged", name);
+            eprintln!("  {name}: unchanged");
         }
         for name in &summary.updated {
-            eprintln!("  {}: updated", name);
+            eprintln!("  {name}: updated");
         }
         for name in &summary.added {
-            eprintln!("  {}: new", name);
+            eprintln!("  {name}: new");
         }
         for name in &summary.removed {
-            eprintln!("  {}: removed", name);
+            eprintln!("  {name}: removed");
         }
         println!("Created: {}", csvdir.display());
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_sqlite(csvdir: &PathBuf, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_sqlite(csvdir: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
     let db_path = to_sqlite::to_sqlite(csvdir, output, force, filter)?;
     println!("Created: {}", db_path.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_duckdb(csvdir: &PathBuf, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_duckdb(csvdir: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
     let db_path = to_duckdb::to_duckdb(csvdir, output, force, filter)?;
     println!("Created: {}", db_path.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_parquetdb(input: &PathBuf, output: Option<&Path>, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_parquetdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
     let output_path: Option<PathBuf>;
     let effective_output = if pipe && output.is_none() {
         let stem = input.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("parquetdb");
-        output_path = Some(std::env::temp_dir().join(format!("{}.parquetdb", stem)));
+        output_path = Some(std::env::temp_dir().join(format!("{stem}.parquetdb")));
         output_path.as_deref()
     } else {
         output
@@ -541,14 +543,14 @@ fn run_to_parquetdb(input: &PathBuf, output: Option<&Path>, order: OrderMode, nu
 
     if pipe {
         let path_str = parquetdb.to_string_lossy().replace('\\', "/");
-        println!("{}", path_str);
+        println!("{path_str}");
     } else {
         println!("Created: {}", parquetdb.display());
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_validate(path: &PathBuf) -> Result<ExitCode> {
+fn run_validate(path: &Path) -> Result<ExitCode> {
     let result = validate::validate(path)?;
     if !result.errors.is_empty() {
         Ok(ExitCode::FAILURE)
@@ -557,7 +559,7 @@ fn run_validate(path: &PathBuf) -> Result<ExitCode> {
     }
 }
 
-fn run_diff(left: &PathBuf, right: &PathBuf, summary: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_diff(left: &Path, right: &Path, summary: bool, filter: &TableFilter) -> Result<ExitCode> {
     let has_differences = diff::diff(left, right, summary, filter)?;
     if has_differences {
         Ok(ExitCode::from(1))
@@ -566,18 +568,18 @@ fn run_diff(left: &PathBuf, right: &PathBuf, summary: bool, filter: &TableFilter
     }
 }
 
-fn run_checksum(path: &PathBuf, filter: &TableFilter) -> Result<ExitCode> {
+fn run_checksum(path: &Path, filter: &TableFilter) -> Result<ExitCode> {
     let hash = checksum::checksum(path, filter)?;
-    println!("{}", hash);
+    println!("{hash}");
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_sql(path: &PathBuf, query: &str, format: Option<sql::OutputFormat>) -> Result<ExitCode> {
+fn run_sql(path: &Path, query: &str, format: Option<sql::OutputFormat>) -> Result<ExitCode> {
     sql::sql(path, query, format)?;
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_watch(path: &PathBuf, target: watch::WatchTarget, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, debounce: u64, filter: &TableFilter) -> Result<ExitCode> {
+fn run_watch(path: &Path, target: watch::WatchTarget, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, debounce: u64, filter: &TableFilter) -> Result<ExitCode> {
     watch::watch(path, target, order, null_mode, order_by, debounce, filter)?;
     Ok(ExitCode::SUCCESS)
 }

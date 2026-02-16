@@ -118,8 +118,12 @@ Creates a `.csvdb` directory by:
 - Copying CSV files
 
 Options:
+- `-o, --output <dir>` - Custom output directory
+- `--force` - Overwrite existing output directory
 - `--no-pk-detection` - Disable automatic primary key detection
 - `--no-fk-detection` - Disable automatic foreign key detection
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
 
 ### to-csvdb — Export database to csvdb
 
@@ -149,7 +153,14 @@ Options:
 - `-o, --output <dir>` - Custom output directory
 - `--order <mode>` - Row ordering mode (see below)
 - `--null-mode <mode>` - NULL representation in CSV (see below)
+- `--natural-sort` - Sort string PKs naturally (e.g. "item2" before "item10")
+- `--order-by <clause>` - Custom ORDER BY clause (e.g. "created_at DESC")
+- `--compress` - Compress CSV files with gzip (produces `.csv.gz` files)
+- `--incremental` - Only re-export tables whose data has changed
 - `--pipe` - Write to temp directory, output only path (for piping)
+- `--force` - Overwrite existing output directory
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
 
 ### to-sqlite — Build SQLite database
 
@@ -215,6 +226,61 @@ Options:
 - `--force` - Overwrite existing output directory
 - `--tables <list>` - Only include these tables (comma-separated)
 - `--exclude <list>` - Exclude these tables (comma-separated)
+
+### validate — Check structural integrity
+
+```bash
+csvdb validate mydb.csvdb/
+csvdb validate mydb.parquetdb/
+```
+
+Checks that a `.csvdb` or `.parquetdb` directory is structurally valid:
+- `schema.sql` exists and parses correctly
+- Every table in the schema has a corresponding data file
+- No orphan data files without schema entries
+
+Returns exit code 0 if valid, 1 if errors found.
+
+### sql — Run read-only SQL queries
+
+```bash
+csvdb sql "SELECT name, score FROM users ORDER BY score DESC" mydb.csvdb/
+csvdb sql "SELECT * FROM orders WHERE total > 100" mydb.sqlite
+csvdb sql "SELECT COUNT(*) FROM events" mydb.duckdb
+```
+
+Runs a read-only SQL query against any supported format. The query is executed in an in-memory SQLite database loaded from the input.
+
+Options:
+- `--format <csv|table>` - Output format (default: table for TTY, csv for pipe)
+
+### watch — Auto-rebuild on changes
+
+```bash
+csvdb watch mydb.csvdb/ --target sqlite
+csvdb watch mydb.csvdb/ --target duckdb
+csvdb watch mydb.csvdb/ --target parquetdb
+```
+
+Monitors a `.csvdb` directory for file changes and automatically rebuilds the target database. Does an initial build, then watches for modifications to CSV files or `schema.sql`.
+
+Options:
+- `--target <sqlite|duckdb|parquetdb>` - Target format to build (required)
+- `--debounce <ms>` - Debounce interval in milliseconds (default: 500)
+- `--order <mode>` - Row ordering (for parquetdb target)
+- `--null-mode <mode>` - NULL representation (for parquetdb target)
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
+
+### hooks — Git hooks for csvdb
+
+```bash
+csvdb hooks install         # Install pre-commit and post-merge hooks
+csvdb hooks install --force # Overwrite existing hooks
+csvdb hooks uninstall       # Remove csvdb git hooks
+```
+
+Installs git hooks that automatically rebuild databases when `.csvdb` files are committed or merged.
 
 ### checksum — Verify data integrity
 

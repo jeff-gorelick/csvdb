@@ -71,21 +71,21 @@ impl Table {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
                 let order = if schema.pk_columns.is_empty() {
                     // Fallback to all columns if no PK (shouldn't happen in Pk mode)
-                    cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ")
+                    cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
                 } else {
-                    schema.pk_columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ")
+                    schema.pk_columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
                 };
                 (cols, order, false)
             }
             OrderMode::AllColumns => {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-                let order = cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+                let order = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
                 (cols, order, false)
             }
             OrderMode::AddSyntheticKey => {
                 let mut cols: Vec<String> = vec![SYNTHETIC_KEY_COLUMN.to_string()];
                 cols.extend(schema.columns.iter().map(|c| c.name.clone()));
-                let order = format!("\"{}\"", SYNTHETIC_KEY_COLUMN);
+                let order = format!("\"{SYNTHETIC_KEY_COLUMN}\"");
                 (cols, order, true)
             }
         };
@@ -96,7 +96,7 @@ impl Table {
             parts.extend(schema.columns.iter().map(|c| format!("\"{}\"", c.name)));
             parts.join(", ")
         } else {
-            columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ")
+            columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
         };
 
         let query = format!(
@@ -184,7 +184,7 @@ impl Table {
         null_mode: NullMode,
     ) -> Result<TableReadResult> {
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-        let select_cols = columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        let select_cols = columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
 
         let query = format!(
             "SELECT {} FROM \"{}\" ORDER BY {}",
@@ -234,21 +234,21 @@ impl Table {
             OrderMode::Pk => {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
                 let order = if schema.pk_columns.is_empty() {
-                    cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ")
+                    cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
                 } else {
-                    schema.pk_columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ")
+                    schema.pk_columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
                 };
                 (cols, order, false)
             }
             OrderMode::AllColumns => {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-                let order = cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+                let order = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
                 (cols, order, false)
             }
             OrderMode::AddSyntheticKey => {
                 let mut cols: Vec<String> = vec![SYNTHETIC_KEY_COLUMN.to_string()];
                 cols.extend(schema.columns.iter().map(|c| c.name.clone()));
-                let order = format!("\"{}\"", SYNTHETIC_KEY_COLUMN);
+                let order = format!("\"{SYNTHETIC_KEY_COLUMN}\"");
                 (cols, order, true)
             }
         };
@@ -259,7 +259,7 @@ impl Table {
             parts.extend(schema.columns.iter().map(|c| format!("\"{}\"", c.name)));
             parts.join(", ")
         } else {
-            columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ")
+            columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
         };
 
         let query = format!(
@@ -345,7 +345,7 @@ impl Table {
         null_mode: NullMode,
     ) -> Result<TableReadResult> {
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-        let select_cols = columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        let select_cols = columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
 
         let query = format!(
             "SELECT {} FROM \"{}\" ORDER BY {}",
@@ -394,13 +394,13 @@ impl Table {
 
         let columns_str = self.columns
             .iter()
-            .map(|c| format!("\"{}\"", c))
+            .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(", ");
 
         // SQLite has a limit on variables per query (default 999)
         // Calculate max rows per batch: 999 / columns, but cap at 500 for safety
-        let max_rows_per_batch = (999 / self.columns.len()).min(500).max(1);
+        let max_rows_per_batch = (999 / self.columns.len()).clamp(1, 500);
         let single_row_placeholders = format!("({})", vec!["?"; self.columns.len()].join(", "));
 
         for chunk in self.rows.chunks(max_rows_per_batch) {
@@ -459,7 +459,7 @@ impl Table {
         let placeholders = vec!["?"; self.columns.len()].join(", ");
         let columns_str = self.columns
             .iter()
-            .map(|c| format!("\"{}\"", c))
+            .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -638,7 +638,7 @@ fn value_to_string(value: &rusqlite::types::Value, null_mode: NullMode) -> Strin
         Value::Text(s) => s.clone(),
         Value::Blob(b) => {
             // Encode blob as hex
-            b.iter().map(|byte| format!("{:02x}", byte)).collect()
+            b.iter().map(|byte| format!("{byte:02x}")).collect()
         }
     }
 }
@@ -662,10 +662,10 @@ fn duckdb_value_to_string(value: &duckdb::types::Value, null_mode: NullMode) -> 
         Value::Text(s) => s.clone(),
         Value::Blob(b) => {
             // Encode blob as hex
-            b.iter().map(|byte| format!("{:02x}", byte)).collect()
+            b.iter().map(|byte| format!("{byte:02x}")).collect()
         }
         // Handle other types by converting to string representation
-        _ => format!("{:?}", value),
+        _ => format!("{value:?}"),
     }
 }
 

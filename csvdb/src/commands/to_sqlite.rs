@@ -50,7 +50,7 @@ pub fn to_sqlite(input_path: &Path, output: Option<&Path>, force: bool, filter: 
             .strip_suffix(".csvdb")
             .or_else(|| stem.strip_suffix(".parquetdb"))
             .unwrap_or(stem);
-        let db_name = format!("{}.sqlite", stem);
+        let db_name = format!("{stem}.sqlite");
         input_path
             .parent()
             .unwrap_or(Path::new("."))
@@ -70,7 +70,7 @@ pub fn to_sqlite(input_path: &Path, output: Option<&Path>, force: bool, filter: 
 
     // Check if any table files are compressed (.csv.gz)
     let has_compressed = schema.tables.keys().any(|t| {
-        csvdb_dir.join(format!("{}.csv.gz", t)).exists()
+        csvdb_dir.join(format!("{t}.csv.gz")).exists()
     });
 
     // Try to use sqlite3 CLI for fast import, fall back to rusqlite if unavailable.
@@ -170,7 +170,7 @@ fn to_sqlite_via_cli(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("sqlite3 import failed: {}", stderr);
+        bail!("sqlite3 import failed: {stderr}");
     }
 
     Ok(db_path.to_path_buf())
@@ -196,7 +196,7 @@ fn to_sqlite_via_rusqlite(
         let stmt = stmt.trim();
         if !stmt.is_empty() {
             conn.execute(stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 

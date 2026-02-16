@@ -93,7 +93,7 @@ pub fn write_table_csv_gz(table: &Table, path: &Path, natural_sort: bool) -> Res
     writer.flush()?;
     // Finish the gzip stream
     writer.into_inner()
-        .map_err(|e| anyhow::anyhow!("CSV flush error: {}", e))?
+        .map_err(|e| anyhow::anyhow!("CSV flush error: {e}"))?
         .finish()?;
 
     Ok(())
@@ -102,11 +102,11 @@ pub fn write_table_csv_gz(table: &Table, path: &Path, natural_sort: bool) -> Res
 /// Find the data file for a table in a csvdb directory.
 /// Checks for `.csv` first, then `.csv.gz`.
 pub fn find_table_file(dir: &Path, table_name: &str) -> Option<PathBuf> {
-    let csv_path = dir.join(format!("{}.csv", table_name));
+    let csv_path = dir.join(format!("{table_name}.csv"));
     if csv_path.exists() {
         return Some(csv_path);
     }
-    let gz_path = dir.join(format!("{}.csv.gz", table_name));
+    let gz_path = dir.join(format!("{table_name}.csv.gz"));
     if gz_path.exists() {
         return Some(gz_path);
     }

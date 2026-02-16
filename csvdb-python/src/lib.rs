@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use std::path::Path;
 
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
@@ -10,7 +12,7 @@ use csvdb::commands::{checksum, diff, init, read, sql, to_csv, to_duckdb, to_par
 use csvdb::{NullMode, OrderMode, TableFilter};
 
 fn to_py_err(e: anyhow::Error) -> PyErr {
-    PyRuntimeError::new_err(format!("{:#}", e))
+    PyRuntimeError::new_err(format!("{e:#}"))
 }
 
 fn parse_order(s: &str) -> PyResult<OrderMode> {
@@ -18,7 +20,7 @@ fn parse_order(s: &str) -> PyResult<OrderMode> {
         "pk" => Ok(OrderMode::Pk),
         "all-columns" => Ok(OrderMode::AllColumns),
         "add-synthetic-key" => Ok(OrderMode::AddSyntheticKey),
-        _ => Err(PyRuntimeError::new_err(format!("Unknown order mode: {}", s))),
+        _ => Err(PyRuntimeError::new_err(format!("Unknown order mode: {s}"))),
     }
 }
 
@@ -27,7 +29,7 @@ fn parse_null_mode(s: &str) -> PyResult<NullMode> {
         "marker" => Ok(NullMode::Marker),
         "empty" => Ok(NullMode::Empty),
         "literal" => Ok(NullMode::Literal),
-        _ => Err(PyRuntimeError::new_err(format!("Unknown null mode: {}", s))),
+        _ => Err(PyRuntimeError::new_err(format!("Unknown null mode: {s}"))),
     }
 }
 
@@ -49,7 +51,7 @@ fn normalize_to_arrow_table<'py>(
         .map_err(|_| PyRuntimeError::new_err("pyarrow is required for DataFrame conversion. Install with: pip install csvdb-py[arrow]"))?;
     pa.getattr("Table")?.call_method1("from_pandas", (obj,))
         .map_err(|e| PyRuntimeError::new_err(format!(
-            "Failed to convert to Arrow table: {}. Expected pandas.DataFrame, polars.DataFrame, or pyarrow.Table", e
+            "Failed to convert to Arrow table: {e}. Expected pandas.DataFrame, polars.DataFrame, or pyarrow.Table"
         )))
 }
 

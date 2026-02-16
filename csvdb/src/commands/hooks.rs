@@ -110,10 +110,10 @@ pub fn uninstall(repo_dir: &Path) -> Result<()> {
             if content.contains("csvdb") {
                 fs::remove_file(&path)
                     .with_context(|| format!("Failed to remove {}", path.display()))?;
-                println!("  Removed: {}", hook_name);
+                println!("  Removed: {hook_name}");
                 removed = true;
             } else {
-                println!("  Skipped: {} (not a csvdb hook)", hook_name);
+                println!("  Skipped: {hook_name} (not a csvdb hook)");
             }
         }
     }
@@ -168,8 +168,7 @@ fn install_hook(hooks_dir: &Path, name: &str, content: &str) -> Result<bool> {
         }
         // Existing hook that's not ours — don't overwrite
         eprintln!(
-            "Warning: {} hook already exists and is not a csvdb hook. Skipping.",
-            name
+            "Warning: {name} hook already exists and is not a csvdb hook. Skipping."
         );
         eprintln!("  Use 'csvdb hooks install --force' to overwrite.");
         return Ok(false);

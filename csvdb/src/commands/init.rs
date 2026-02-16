@@ -118,7 +118,7 @@ impl InferredTable {
             ddl.push('\n');
         }
 
-        ddl.push_str(")");
+        ddl.push(')');
         ddl
     }
 }
@@ -407,7 +407,7 @@ fn suggest_foreign_keys(tables: &[InferredTable]) -> Vec<(usize, Vec<SuggestedFo
                 ];
                 // Handle y -> ies: category -> categories
                 if prefix.ends_with('y') {
-                    candidates.push(format!("{}ies", &prefix[..prefix.len() - 1]));
+                    candidates.push(format!("{}ies", prefix.strip_suffix('y').unwrap()));
                 }
 
                 for candidate in &candidates {
@@ -528,25 +528,24 @@ pub fn init_csvdb(source: &Path, output: Option<&Path>, force: bool, filter: &Ta
     } else if source.is_file() {
         // Single file: use file stem for .csvdb directory name
         let stem = source.file_stem().and_then(|n| n.to_str()).unwrap_or("data");
-        source_dir.join(format!("{}.csvdb", stem))
+        source_dir.join(format!("{stem}.csvdb"))
     } else {
         // Directory: use directory name for .csvdb directory name
         let dir_name = source_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("data");
-        source_dir.parent().unwrap_or(Path::new(".")).join(format!("{}.csvdb", dir_name))
+        source_dir.parent().unwrap_or(Path::new(".")).join(format!("{dir_name}.csvdb"))
     };
 
     // Check for existing output (skip when writing back into source)
-    if output_dir.exists() && output_dir != source_dir {
-        if !force {
+    if output_dir.exists() && output_dir != source_dir
+        && !force {
             bail!(
                 "Output directory already exists: {}\nUse --force to overwrite.",
                 output_dir.display()
             );
         }
-    }
 
     // Create directory if needed
     if !output_dir.exists() {
@@ -556,7 +555,7 @@ pub fn init_csvdb(source: &Path, output: Option<&Path>, force: bool, filter: &Ta
     // Write schema.sql
     let schema_path = output_dir.join("schema.sql");
     fs::write(&schema_path, &schema_sql)
-        .with_context(|| format!("Failed to write schema.sql"))?;
+        .with_context(|| "Failed to write schema.sql".to_string())?;
 
     // Copy CSV files if source != output
     if source_dir != output_dir {
@@ -593,7 +592,7 @@ fn generate_schema_sql(tables: &[InferredTable]) -> String {
     let mut sql = String::new();
     for (i, table) in sorted.iter().enumerate() {
         if i > 0 {
-            sql.push_str("\n");
+            sql.push('\n');
         }
         sql.push_str(&table.to_ddl());
         sql.push_str(";\n");

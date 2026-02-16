@@ -106,13 +106,13 @@ fn load_parquetdb(parquetdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Tabl
         if !stmt.is_empty() && stmt.to_uppercase().starts_with("CREATE TABLE") {
             let stmt = stmt.replace(" REAL", " DOUBLE");
             conn.execute(&stmt, [])
-                .with_context(|| format!("Failed to execute: {}", stmt))?;
+                .with_context(|| format!("Failed to execute: {stmt}"))?;
         }
     }
 
     // Load parquet data in FK dependency order
     for table_name in schema.tables_in_fk_order()? {
-        let parquet_path = parquetdb_dir.join(format!("{}.parquet", table_name));
+        let parquet_path = parquetdb_dir.join(format!("{table_name}.parquet"));
         if parquet_path.exists() {
             let abs_path = parquet_path.canonicalize()?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -120,8 +120,7 @@ fn load_parquetdb(parquetdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Tabl
 
             conn.execute(
                 &format!(
-                    "INSERT INTO \"{}\" SELECT * FROM read_parquet('{}')",
-                    table_name, path_str
+                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
                 ),
                 [],
             )?;
@@ -156,8 +155,7 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
     // Create table from parquet
     conn.execute(
         &format!(
-            "CREATE TABLE \"{}\" AS SELECT * FROM read_parquet('{}')",
-            table_name, path_str
+            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
         ),
         [],
     )?;
@@ -210,13 +208,13 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
         let in_right = right_tables.contains_key(table_name);
 
         if in_left && !in_right {
-            println!("{}: removed table", table_name);
+            println!("{table_name}: removed table");
             has_differences = true;
             continue;
         }
 
         if !in_left && in_right {
-            println!("{}: added table", table_name);
+            println!("{table_name}: added table");
             has_differences = true;
             continue;
         }
@@ -297,7 +295,7 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
                         .get(i)
                         .map(|s| s.as_str())
                         .unwrap_or("?");
-                    format!("{}={}", col, v)
+                    format!("{col}={v}")
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -399,7 +397,7 @@ mod tests {
         fs::create_dir_all(&csvdb_dir).unwrap();
         fs::write(csvdb_dir.join("schema.sql"), schema_sql).unwrap();
         for (table_name, content) in csvs {
-            fs::write(csvdb_dir.join(format!("{}.csv", table_name)), content).unwrap();
+            fs::write(csvdb_dir.join(format!("{table_name}.csv")), content).unwrap();
         }
         csvdb_dir
     }

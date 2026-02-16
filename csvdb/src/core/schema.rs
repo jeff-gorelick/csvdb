@@ -129,7 +129,7 @@ fn sort_views_by_dependency(views: Vec<View>) -> Result<Vec<View>> {
 /// Topologically sort tables so that referenced tables come before tables with
 /// foreign keys. Parses REFERENCES clauses from each table's CREATE TABLE SQL.
 /// Uses Kahn's algorithm (BFS). Returns an error if a cycle is detected.
-fn sort_tables_by_fk_dependency<'a>(tables: Vec<&'a TableSchema>) -> Result<Vec<&'a TableSchema>> {
+fn sort_tables_by_fk_dependency(tables: Vec<&TableSchema>) -> Result<Vec<&TableSchema>> {
     if tables.len() <= 1 {
         return Ok(tables);
     }
@@ -243,10 +243,9 @@ impl Schema {
         if order_mode == OrderMode::Pk && !tables_without_pk.is_empty() {
             let table_list = tables_without_pk.join(", ");
             bail!(
-                "Table(s) without PRIMARY KEY: {}.\n\n\
+                "Table(s) without PRIMARY KEY: {table_list}.\n\n\
                  Use --order=all-columns to sort by all columns, or\n\
-                 Use --order=add-synthetic-key to add a __csvdb_rowid column.",
-                table_list
+                 Use --order=add-synthetic-key to add a __csvdb_rowid column."
             );
         }
 
@@ -270,7 +269,7 @@ impl Schema {
     }
 
     fn read_table_schema(conn: &Connection, table_name: &str, sql: &str) -> Result<TableSchema> {
-        let mut stmt = conn.prepare(&format!("PRAGMA table_info('{}')", table_name))?;
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info('{table_name}')"))?;
 
         let columns: Vec<Column> = stmt
             .query_map([], |row| {
@@ -357,10 +356,9 @@ impl Schema {
         if order_mode == OrderMode::Pk && !tables_without_pk.is_empty() {
             let table_list = tables_without_pk.join(", ");
             bail!(
-                "Table(s) without PRIMARY KEY: {}.\n\n\
+                "Table(s) without PRIMARY KEY: {table_list}.\n\n\
                  Use --order=all-columns to sort by all columns, or\n\
-                 Use --order=add-synthetic-key to add a __csvdb_rowid column.",
-                table_list
+                 Use --order=add-synthetic-key to add a __csvdb_rowid column."
             );
         }
 
@@ -456,7 +454,7 @@ impl Schema {
 
     /// Generate a CREATE TABLE statement from column metadata.
     fn generate_create_table_sql(table_name: &str, columns: &[Column], pk_columns: &[String]) -> String {
-        let mut sql = format!("CREATE TABLE \"{}\" (\n", table_name);
+        let mut sql = format!("CREATE TABLE \"{table_name}\" (\n");
 
         for (i, col) in columns.iter().enumerate() {
             sql.push_str(&format!("    \"{}\" {}", col.name, col.col_type));
@@ -467,7 +465,7 @@ impl Schema {
 
             if let Some(ref default) = col.default_value {
                 if !default.is_empty() {
-                    sql.push_str(&format!(" DEFAULT {}", default));
+                    sql.push_str(&format!(" DEFAULT {default}"));
                 }
             }
 
@@ -480,10 +478,10 @@ impl Schema {
         if !pk_columns.is_empty() {
             let pk_list = pk_columns
                 .iter()
-                .map(|c| format!("\"{}\"", c))
+                .map(|c| format!("\"{c}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            sql.push_str(&format!("    PRIMARY KEY ({})\n", pk_list));
+            sql.push_str(&format!("    PRIMARY KEY ({pk_list})\n"));
         }
 
         sql.push(')');
@@ -506,7 +504,7 @@ impl Schema {
 
         for (i, table) in sorted_tables.iter().enumerate() {
             if i > 0 {
-                content.push_str("\n");
+                content.push('\n');
             }
             content.push_str(&table.sql);
             content.push_str(";\n");
@@ -520,7 +518,7 @@ impl Schema {
         // Write views at the end, sorted so dependencies come first
         let sorted_views = sort_views_by_dependency(self.views.clone())?;
         for view in &sorted_views {
-            content.push_str("\n");
+            content.push('\n');
             content.push_str(&view.sql);
             content.push_str(";\n");
         }
@@ -542,7 +540,7 @@ impl Schema {
             let stmt = stmt.trim();
             if !stmt.is_empty() {
                 conn.execute(stmt, [])
-                    .with_context(|| format!("Failed to execute: {}", stmt))?;
+                    .with_context(|| format!("Failed to execute: {stmt}"))?;
             }
         }
 
@@ -591,11 +589,7 @@ pub fn normalize_view_sql(sql: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_uppercase()
-        .replace('"', "")
-        .replace('\'', "")
-        .replace('`', "")
-        .replace('[', "")
-        .replace(']', "")
+        .replace(['"', '\'', '`', '[', ']'], "")
 }
 
 #[cfg(test)]
