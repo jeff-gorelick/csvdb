@@ -9,11 +9,16 @@ description = "CLI tool to convert between SQLite, DuckDB, CSV, and Parquet"
 requires-python = ">=3.8"
 readme = "README.md"
 license = "MIT"
+authors = [{name = "Jeff Gorelick", email = "jeffrey.gorelick@gmail.com"}]
 keywords = ["csv", "sqlite", "duckdb", "parquet", "database", "cli"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
+
+[project.urls]
+Repository = "https://github.com/jeff-gorelick/csvdb"
+Issues = "https://github.com/jeff-gorelick/csvdb/issues"
 
 [tool.maturin]
 manifest-path = "../csvdb/Cargo.toml"
