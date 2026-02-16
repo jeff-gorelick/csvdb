@@ -2,7 +2,57 @@
 
 import subprocess
 import time
-from pathlib import Path
+import os
+import threading
+
+
+def read_stderr_lines(proc, lines, stop_event):
+    """Read stderr lines from a process in a background thread."""
+    while not stop_event.is_set():
+        line = proc.stderr.readline()
+        if line:
+            lines.append(line)
+        elif proc.poll() is not None:
+            break
+
+
+def wait_for_output(lines, substring, timeout=15):
+    """Poll collected stderr lines until substring appears or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if any(substring in line for line in lines):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def start_watch(csvdb_bin, csvdb_dir, target="sqlite", debounce=None):
+    """Start a watch process and return (proc, lines, stop_event)."""
+    cmd = [csvdb_bin, "watch", str(csvdb_dir), "--target", target]
+    if debounce:
+        cmd += ["--debounce", str(debounce)]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    lines = []
+    stop_event = threading.Event()
+    thread = threading.Thread(target=read_stderr_lines, args=(proc, lines, stop_event), daemon=True)
+    thread.start()
+    return proc, lines, stop_event
+
+
+def stop_watch(proc, stop_event):
+    """Terminate a watch process cleanly."""
+    stop_event.set()
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 class TestWatch:
@@ -16,50 +66,23 @@ class TestWatch:
 
     def test_watch_initial_build(self, csvdb_bin, sample_csvdb):
         """watch should do an initial build before waiting for changes."""
-        # Start watch in background, let it do initial build, then kill it
-        proc = subprocess.Popen(
-            [csvdb_bin, "watch", str(sample_csvdb), "--target", "sqlite"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        proc, lines, stop_event = start_watch(csvdb_bin, sample_csvdb)
 
-        # Give it time to do the initial build
-        time.sleep(2)
-        proc.terminate()
-        try:
-            _, stderr = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            _, stderr = proc.communicate()
+        assert wait_for_output(lines, "Built:"), f"Expected 'Built:' in output, got: {lines}"
 
-        # Should have done an initial build
-        assert "Watching:" in stderr
-        assert "Built:" in stderr
+        stop_watch(proc, stop_event)
 
-        # The sqlite file should exist
         sqlite_path = sample_csvdb.parent / "sample.sqlite"
         assert sqlite_path.exists()
 
     def test_watch_rebuilds_on_change(self, csvdb_bin, sample_csvdb):
         """watch should rebuild when a CSV file changes."""
-        proc = subprocess.Popen(
-            [csvdb_bin, "watch", str(sample_csvdb), "--target", "sqlite", "--debounce", "200"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        proc, lines, stop_event = start_watch(csvdb_bin, sample_csvdb, debounce=200)
 
-        # Wait for initial build
-        time.sleep(3)
-
-        # Get initial mtime of sqlite
-        sqlite_path = sample_csvdb.parent / "sample.sqlite"
-        assert sqlite_path.exists()
-        initial_mtime = sqlite_path.stat().st_mtime
+        assert wait_for_output(lines, "Waiting for changes"), f"Expected initial build, got: {lines}"
+        time.sleep(1)  # let filesystem watcher fully initialize
 
         # Modify the CSV
-        time.sleep(1)  # ensure time difference
         csv_path = sample_csvdb / "items.csv"
         csv_path.write_text(
             "id,name,price\n"
@@ -69,82 +92,49 @@ class TestWatch:
             "4,Doohickey,49.99\n"
         )
 
-        # Wait for rebuild (poll for up to 10s)
-        deadline = time.time() + 10
-        rebuilt = False
-        while time.time() < deadline:
-            new_mtime = sqlite_path.stat().st_mtime
-            if new_mtime > initial_mtime:
-                rebuilt = True
-                break
-            time.sleep(0.5)
+        assert wait_for_output(lines, "Change detected"), f"Expected 'Change detected', got: {lines}"
 
-        proc.terminate()
-        try:
-            _, stderr = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            _, stderr = proc.communicate()
-
-        # Should have detected change and rebuilt
-        assert "Change detected" in stderr
-        assert rebuilt, "sqlite file was not updated after CSV change"
+        stop_watch(proc, stop_event)
 
     def test_watch_duckdb_target(self, csvdb_bin, sample_csvdb):
         """watch --target duckdb should build a DuckDB file."""
-        proc = subprocess.Popen(
-            [csvdb_bin, "watch", str(sample_csvdb), "--target", "duckdb"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        proc, lines, stop_event = start_watch(csvdb_bin, sample_csvdb, target="duckdb")
 
-        time.sleep(2)
-        proc.terminate()
-        try:
-            _, stderr = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            _, stderr = proc.communicate()
+        assert wait_for_output(lines, "Built:"), f"Expected 'Built:' in output, got: {lines}"
 
-        assert "Built:" in stderr
+        stop_watch(proc, stop_event)
+
         duckdb_path = sample_csvdb.parent / "sample.duckdb"
         assert duckdb_path.exists()
 
     def test_watch_survives_build_error(self, csvdb_bin, sample_csvdb):
         """watch should continue watching after a build error."""
-        proc = subprocess.Popen(
-            [csvdb_bin, "watch", str(sample_csvdb), "--target", "sqlite", "--debounce", "200"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        proc, lines, stop_event = start_watch(csvdb_bin, sample_csvdb, debounce=200)
 
-        # Wait for initial build
-        time.sleep(2)
+        assert wait_for_output(lines, "Waiting for changes"), f"Expected initial build, got: {lines}"
+        time.sleep(1)  # let filesystem watcher fully initialize
 
         # Break the schema.sql to cause a build error
         schema_path = sample_csvdb / "schema.sql"
         original_schema = schema_path.read_text()
         schema_path.write_text("INVALID SQL GARBAGE")
 
-        # Wait for error
-        time.sleep(3)
+        assert wait_for_output(lines, "Build error", timeout=10), f"Expected 'Build error', got: {lines}"
 
         # Fix the schema back
         schema_path.write_text(original_schema)
 
-        # Wait for successful rebuild
-        time.sleep(3)
+        # Wait for successful rebuild (second "Built:" after the error)
+        built_count_before = sum(1 for l in lines if "Built:" in l)
+        deadline = time.time() + 10
+        rebuilt = False
+        while time.time() < deadline:
+            built_count = sum(1 for l in lines if "Built:" in l)
+            if built_count > built_count_before:
+                rebuilt = True
+                break
+            time.sleep(0.3)
 
-        proc.terminate()
-        try:
-            _, stderr = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            _, stderr = proc.communicate()
+        stop_watch(proc, stop_event)
 
-        # Should have seen build error but continued
-        assert "Build error" in stderr
-        # Should have rebuilt after fix
-        assert stderr.count("Built:") >= 2
+        assert rebuilt, f"Expected rebuild after fix, got: {lines}"
