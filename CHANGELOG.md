@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.11 (2026-02-16)
+
+- Fix all clippy warnings, add clippy CI job with `-D warnings`
+- Document missing CLI commands in README: `sql`, `watch`, `hooks`, `validate`
+- Document DataFrame API: `to_arrow()`, `to_pandas()`, `to_polars()`, `sql_arrow()`, `sql_pandas()`, `sql_polars()`
+- Add `tables`/`exclude` filter params to all FFI functions and Perl bindings
+- Add Cargo.toml metadata (description, license, repository) to csvdb-ffi and csvdb-python
+- Fix flaky watch tests with polling approach
+- Add aarch64-unknown-linux-gnu (ARM Linux) release binary
+- Skip coverage job during release CI
+
 ## 0.2.10 (2026-02-16)
 
 - Idempotent releases: re-running the release workflow no longer fails if packages are already published
