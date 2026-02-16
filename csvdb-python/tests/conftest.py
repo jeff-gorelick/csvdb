@@ -95,6 +95,24 @@ def raw_csv_dir(temp_dir):
 
 
 @pytest.fixture
+def multi_table_sqlite(temp_dir):
+    """Create a SQLite database with multiple tables."""
+    db_path = temp_dir / "multi.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    conn.execute("INSERT INTO users VALUES (1, 'Alice')")
+    conn.execute("INSERT INTO users VALUES (2, 'Bob')")
+    conn.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL)")
+    conn.execute("INSERT INTO orders VALUES (100, 1, 99.99)")
+    conn.execute("INSERT INTO orders VALUES (101, 2, 49.50)")
+    conn.execute("CREATE TABLE logs (id INTEGER PRIMARY KEY, msg TEXT)")
+    conn.execute("INSERT INTO logs VALUES (1, 'started')")
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+@pytest.fixture
 def raw_csv_dir_with_fks(temp_dir):
     """Create a directory with raw CSV files that have FK relationships."""
     csv_dir = temp_dir / "raw_fk"

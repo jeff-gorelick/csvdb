@@ -210,6 +210,52 @@ class TestInit:
         assert len(table["suggested_fks"]) == 0
 
 
+class TestExcludeFilter:
+    def test_to_csvdb_exclude(self, multi_table_sqlite, temp_dir):
+        output = str(temp_dir / "filtered.csvdb")
+        csvdb.to_csvdb(str(multi_table_sqlite), output=output, exclude=["logs"])
+        assert os.path.isfile(os.path.join(output, "users.csv"))
+        assert os.path.isfile(os.path.join(output, "orders.csv"))
+        assert not os.path.isfile(os.path.join(output, "logs.csv"))
+
+    def test_to_csvdb_tables(self, multi_table_sqlite, temp_dir):
+        output = str(temp_dir / "filtered.csvdb")
+        csvdb.to_csvdb(str(multi_table_sqlite), output=output, tables=["users"])
+        assert os.path.isfile(os.path.join(output, "users.csv"))
+        assert not os.path.isfile(os.path.join(output, "orders.csv"))
+
+    def test_to_sqlite_exclude(self, multi_table_sqlite, temp_dir):
+        csvdb_out = str(temp_dir / "full.csvdb")
+        csvdb.to_csvdb(str(multi_table_sqlite), output=csvdb_out)
+        sqlite_out = str(temp_dir / "filtered.sqlite")
+        csvdb.to_sqlite(csvdb_out, output=sqlite_out, exclude=["logs"])
+        import sqlite3
+        conn = sqlite3.connect(sqlite_out)
+        user_count = conn.execute("SELECT count(*) FROM users").fetchone()[0]
+        log_count = conn.execute("SELECT count(*) FROM logs").fetchone()[0]
+        conn.close()
+        assert user_count == 2
+        assert log_count == 0
+
+    def test_checksum_tables_filter(self, multi_table_sqlite, temp_dir):
+        csvdb_out = str(temp_dir / "full.csvdb")
+        csvdb.to_csvdb(str(multi_table_sqlite), output=csvdb_out)
+        full_hash = csvdb.checksum(csvdb_out)
+        partial_hash = csvdb.checksum(csvdb_out, tables=["users"])
+        assert full_hash != partial_hash
+
+
+class TestOrderBy:
+    def test_order_by_column(self, sample_sqlite, temp_dir):
+        output = str(temp_dir / "ordered.csvdb")
+        csvdb.to_csvdb(str(sample_sqlite), output=output, order_by="score DESC")
+        csv_path = os.path.join(output, "users.csv")
+        with open(csv_path) as f:
+            lines = f.readlines()
+        # First data row should have highest score (Alice=95)
+        assert "Alice" in lines[1]
+
+
 class TestErrorHandling:
     def test_bad_path(self):
         with pytest.raises(RuntimeError):
