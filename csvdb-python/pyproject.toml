@@ -9,11 +9,16 @@ description = "Python bindings for csvdb: convert between SQLite, DuckDB, CSV, a
 requires-python = ">=3.8"
 readme = "README.md"
 license = "MIT"
+authors = [{name = "Jeff Gorelick", email = "jeffrey.gorelick@gmail.com"}]
 keywords = ["csv", "sqlite", "duckdb", "parquet", "database"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
+
+[project.urls]
+Repository = "https://github.com/jeff-gorelick/csvdb"
+Issues = "https://github.com/jeff-gorelick/csvdb/issues"
 
 [project.optional-dependencies]
 arrow = ["pyarrow>=12"]

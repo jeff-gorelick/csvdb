@@ -48,6 +48,13 @@ class TestToCsvdbIncremental:
         assert isinstance(result["added"], list)
         assert isinstance(result["unchanged"], list)
 
+    def test_incremental_second_run_unchanged(self, sample_sqlite, temp_dir):
+        output = str(temp_dir / "inc2.csvdb")
+        csvdb.to_csvdb_incremental(str(sample_sqlite), output=output)
+        result = csvdb.to_csvdb_incremental(str(sample_sqlite), output=output)
+        assert len(result["unchanged"]) > 0
+        assert len(result["updated"]) == 0
+
 
 class TestToSqlite:
     def test_from_csvdb(self, sample_csvdb):
@@ -73,6 +80,14 @@ class TestToParquetdb:
         result = csvdb.to_parquetdb(str(sample_csvdb), output=output, force=True)
         assert result == output
         assert os.path.isdir(output)
+
+    def test_round_trip(self, sample_csvdb, temp_dir):
+        """csvdb -> parquetdb -> csvdb preserves checksum."""
+        pqdb = str(temp_dir / "rt.parquetdb")
+        csvdb.to_parquetdb(str(sample_csvdb), output=pqdb, force=True)
+        csvdb_out = str(temp_dir / "rt.csvdb")
+        csvdb.to_csvdb(pqdb, output=csvdb_out, force=True)
+        assert csvdb.checksum(str(sample_csvdb)) == csvdb.checksum(csvdb_out)
 
 
 class TestSqlQuery:
@@ -210,6 +225,54 @@ class TestInit:
         assert len(table["suggested_fks"]) == 0
 
 
+class TestDiffFiltered:
+    def test_diff_with_tables_filter(self, temp_dir):
+        dir1 = temp_dir / "fa.csvdb"
+        dir1.mkdir()
+        (dir1 / "schema.sql").write_text(
+            'CREATE TABLE "t1" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+            'CREATE TABLE "t2" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+        )
+        (dir1 / "t1.csv").write_text("id,v\n1,same\n")
+        (dir1 / "t2.csv").write_text("id,v\n1,hello\n")
+
+        dir2 = temp_dir / "fb.csvdb"
+        dir2.mkdir()
+        (dir2 / "schema.sql").write_text(
+            'CREATE TABLE "t1" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+            'CREATE TABLE "t2" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+        )
+        (dir2 / "t1.csv").write_text("id,v\n1,same\n")
+        (dir2 / "t2.csv").write_text("id,v\n1,world\n")
+
+        # Full diff sees differences
+        assert csvdb.diff(str(dir1), str(dir2)) is True
+        # Filtered to t1 only — no differences
+        assert csvdb.diff(str(dir1), str(dir2), tables=["t1"]) is False
+
+    def test_diff_with_exclude_filter(self, temp_dir):
+        dir1 = temp_dir / "ea.csvdb"
+        dir1.mkdir()
+        (dir1 / "schema.sql").write_text(
+            'CREATE TABLE "t1" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+            'CREATE TABLE "t2" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+        )
+        (dir1 / "t1.csv").write_text("id,v\n1,same\n")
+        (dir1 / "t2.csv").write_text("id,v\n1,hello\n")
+
+        dir2 = temp_dir / "eb.csvdb"
+        dir2.mkdir()
+        (dir2 / "schema.sql").write_text(
+            'CREATE TABLE "t1" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+            'CREATE TABLE "t2" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+        )
+        (dir2 / "t1.csv").write_text("id,v\n1,same\n")
+        (dir2 / "t2.csv").write_text("id,v\n1,world\n")
+
+        # Exclude t2 — no differences
+        assert csvdb.diff(str(dir1), str(dir2), exclude=["t2"]) is False
+
+
 class TestExcludeFilter:
     def test_to_csvdb_exclude(self, multi_table_sqlite, temp_dir):
         output = str(temp_dir / "filtered.csvdb")
@@ -254,6 +317,37 @@ class TestOrderBy:
             lines = f.readlines()
         # First data row should have highest score (Alice=95)
         assert "Alice" in lines[1]
+
+
+class TestInitFiltered:
+    def test_init_with_tables_filter(self, temp_dir):
+        csv_dir = temp_dir / "multi_raw"
+        csv_dir.mkdir()
+        (csv_dir / "users.csv").write_text("id,name\n1,Alice\n")
+        (csv_dir / "orders.csv").write_text("id,amount\n1,99.99\n")
+        result = csvdb.init(str(csv_dir), tables=["users"])
+        names = [t["name"] for t in result["tables"]]
+        assert "users" in names
+        assert "orders" not in names
+
+    def test_init_with_exclude_filter(self, temp_dir):
+        csv_dir = temp_dir / "multi_raw2"
+        csv_dir.mkdir()
+        (csv_dir / "users.csv").write_text("id,name\n1,Alice\n")
+        (csv_dir / "orders.csv").write_text("id,amount\n1,99.99\n")
+        result = csvdb.init(str(csv_dir), exclude=["orders"])
+        names = [t["name"] for t in result["tables"]]
+        assert "users" in names
+        assert "orders" not in names
+
+
+class TestChecksumExclude:
+    def test_checksum_exclude_filter(self, multi_table_sqlite, temp_dir):
+        csvdb_out = str(temp_dir / "full2.csvdb")
+        csvdb.to_csvdb(str(multi_table_sqlite), output=csvdb_out)
+        full_hash = csvdb.checksum(csvdb_out)
+        partial_hash = csvdb.checksum(csvdb_out, exclude=["logs"])
+        assert full_hash != partial_hash
 
 
 class TestErrorHandling:
