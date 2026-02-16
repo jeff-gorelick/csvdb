@@ -67,6 +67,7 @@ jobs:
         run: prove perl/t/
 
   coverage:
+    if: github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
