@@ -609,6 +609,23 @@ result = csvdb.init("./raw_csvs/")
 # Selective export
 csvdb.to_csvdb("mydb.sqlite", tables=["users", "orders"], force=True)
 csvdb.to_csvdb("mydb.sqlite", exclude=["logs"], force=True)
+
+# DataFrame support (pip install csvdb-py[pandas] or csvdb-py[polars])
+arrow_tables = csvdb.to_arrow("mydb.csvdb")           # dict of pyarrow Tables
+df = csvdb.to_pandas("mydb.csvdb", table="users")     # pandas DataFrame
+df = csvdb.to_polars("mydb.csvdb", table="users")     # polars DataFrame
+
+# SQL queries returning DataFrames
+arrow_table = csvdb.sql_arrow("mydb.csvdb", "SELECT * FROM users")
+df = csvdb.sql_pandas("mydb.csvdb", "SELECT * FROM users WHERE score > 90")
+df = csvdb.sql_polars("mydb.csvdb", "SELECT * FROM users ORDER BY name")
+```
+
+Install extras for DataFrame support:
+```bash
+pip install csvdb-py[pandas]   # pandas + pyarrow
+pip install csvdb-py[polars]   # polars
+pip install csvdb-py[all]      # everything
 ```
 
 ### Development
