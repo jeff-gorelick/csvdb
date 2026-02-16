@@ -37,7 +37,7 @@ unless ($lib) {
 $ENV{CSVDB_FFI_LIB} = $lib;
 require Csvdb;
 
-plan tests => 21;
+plan tests => 25;
 
 # Helper: create a sample .csvdb directory
 sub make_csvdb {
@@ -170,3 +170,23 @@ is($diff_filtered, 0, "diff with tables filter works on identical data");
 my $sql_where = Csvdb::sql(path => $csvdb_dir, query => "SELECT name FROM users WHERE id = 1");
 like($sql_where, qr/Alice/, "SQL with WHERE returns Alice");
 unlike($sql_where, qr/Bob/, "SQL with WHERE excludes Bob");
+
+# --- Test to_csvdb with compress ---
+my $comp_dir = File::Spec->catdir($tmpdir, "compressed.csvdb");
+my $comp_path = Csvdb::to_csvdb(input => $sqlite_path, output => $comp_dir, force => 1, compress => 1);
+ok(-f File::Spec->catfile($comp_path, 'users.csv.gz'), "to_csvdb compress creates .csv.gz");
+
+# --- Test to_csvdb_incremental ---
+my $inc_dir = File::Spec->catdir($tmpdir, "incremental.csvdb");
+my $inc_json = Csvdb::to_csvdb_incremental(input => $sqlite_path, output => $inc_dir);
+like($inc_json, qr/"path"/, "to_csvdb_incremental returns JSON with path");
+like($inc_json, qr/"added"/, "to_csvdb_incremental returns JSON with added");
+
+# --- Test init with detect_pk disabled ---
+my $raw_dir2 = File::Spec->catdir($tmpdir, "raw2");
+mkdir $raw_dir2;
+open my $fh2, '>', File::Spec->catfile($raw_dir2, 'items.csv') or die $!;
+print $fh2 "id,name\n1,Foo\n2,Bar\n";
+close $fh2;
+my $init_nopk = Csvdb::init(source => $raw_dir2, force => 1, detect_pk => 0);
+ok(defined $init_nopk && length($init_nopk) > 0, "init with detect_pk=0 returns output path");

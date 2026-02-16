@@ -158,6 +158,9 @@ fn test_to_csvdb_from_sqlite() {
             1,           // force
             ptr::null(), // tables
             ptr::null(), // exclude
+            0,           // natural_sort
+            ptr::null(), // order_by
+            0,           // compress
         ))
     };
     assert!(path.ends_with(".csvdb"), "unexpected path: {path}");
@@ -181,6 +184,7 @@ fn test_to_parquetdb() {
             1,           // force
             ptr::null(), // tables
             ptr::null(), // exclude
+            ptr::null(), // order_by
         ))
     };
     assert!(path.ends_with(".parquetdb"), "unexpected path: {path}");
@@ -259,9 +263,58 @@ fn test_init() {
     ).unwrap();
 
     let source = c(csv_dir.to_str().unwrap());
-    let path = unsafe { read_and_free(csvdb_init(source.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null())) };
+    let path = unsafe { read_and_free(csvdb_init(source.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null(), 1, 1)) };
     assert!(path.ends_with(".csvdb"), "unexpected path: {path}");
     assert!(std::path::Path::new(&path).join("schema.sql").exists());
+}
+
+#[test]
+fn test_to_csvdb_incremental() {
+    let dir = tempdir().unwrap();
+    let db_path = make_test_sqlite(dir.path());
+    let input = c(db_path.to_str().unwrap());
+
+    let json = unsafe {
+        read_and_free(csvdb_to_csvdb_incremental(
+            input.as_ptr(),
+            ptr::null(), // default output
+            ptr::null(), // default order
+            ptr::null(), // default null_mode
+            ptr::null(), // tables
+            ptr::null(), // exclude
+            0,           // natural_sort
+            ptr::null(), // order_by
+            0,           // compress
+        ))
+    };
+    assert!(json.contains("\"path\""), "expected JSON with path, got: {json}");
+    assert!(json.contains("\"added\""), "expected JSON with added, got: {json}");
+    assert!(json.contains("\"unchanged\""), "expected JSON with unchanged, got: {json}");
+}
+
+#[test]
+fn test_to_csvdb_compress() {
+    let dir = tempdir().unwrap();
+    let db_path = make_test_sqlite(dir.path());
+    let input = c(db_path.to_str().unwrap());
+    let output_dir = dir.path().join("compressed.csvdb");
+    let output = c(output_dir.to_str().unwrap());
+
+    let path = unsafe {
+        read_and_free(csvdb_to_csvdb(
+            input.as_ptr(),
+            output.as_ptr(),
+            ptr::null(), // default order
+            ptr::null(), // default null_mode
+            1,           // force
+            ptr::null(), // tables
+            ptr::null(), // exclude
+            0,           // natural_sort
+            ptr::null(), // order_by
+            1,           // compress
+        ))
+    };
+    assert!(std::path::Path::new(&path).join("users.csv.gz").exists(), "expected compressed csv.gz");
 }
 
 #[test]
