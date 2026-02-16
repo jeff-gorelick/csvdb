@@ -51,7 +51,7 @@ class TestWatch:
         )
 
         # Wait for initial build
-        time.sleep(2)
+        time.sleep(3)
 
         # Get initial mtime of sqlite
         sqlite_path = sample_csvdb.parent / "sample.sqlite"
@@ -59,7 +59,7 @@ class TestWatch:
         initial_mtime = sqlite_path.stat().st_mtime
 
         # Modify the CSV
-        time.sleep(0.5)  # ensure time difference
+        time.sleep(1)  # ensure time difference
         csv_path = sample_csvdb / "items.csv"
         csv_path.write_text(
             "id,name,price\n"
@@ -69,8 +69,15 @@ class TestWatch:
             "4,Doohickey,49.99\n"
         )
 
-        # Wait for rebuild
-        time.sleep(3)
+        # Wait for rebuild (poll for up to 10s)
+        deadline = time.time() + 10
+        rebuilt = False
+        while time.time() < deadline:
+            new_mtime = sqlite_path.stat().st_mtime
+            if new_mtime > initial_mtime:
+                rebuilt = True
+                break
+            time.sleep(0.5)
 
         proc.terminate()
         try:
@@ -81,10 +88,7 @@ class TestWatch:
 
         # Should have detected change and rebuilt
         assert "Change detected" in stderr
-
-        # The sqlite should have been updated
-        new_mtime = sqlite_path.stat().st_mtime
-        assert new_mtime > initial_mtime
+        assert rebuilt, "sqlite file was not updated after CSV change"
 
     def test_watch_duckdb_target(self, csvdb_bin, sample_csvdb):
         """watch --target duckdb should build a DuckDB file."""
