@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: pip
+    directory: /csvdb-python
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: pip
+    directory: /tests/functional
+    schedule:
+      interval: monthly

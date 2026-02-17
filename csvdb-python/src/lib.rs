@@ -8,7 +8,9 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule};
 
-use csvdb::commands::{checksum, diff, init, read, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, write};
+use csvdb::commands::{
+    checksum, diff, init, read, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, write,
+};
 use csvdb::{NullMode, OrderMode, TableFilter};
 
 fn to_py_err(e: anyhow::Error) -> PyErr {
@@ -122,8 +124,9 @@ fn py_to_csvdb(
     }
 
     // String path → existing conversion
-    let input_str: String = input.extract()
-        .map_err(|_| PyRuntimeError::new_err("input must be a file path (str) or dict of DataFrames"))?;
+    let input_str: String = input.extract().map_err(|_| {
+        PyRuntimeError::new_err("input must be a file path (str) or dict of DataFrames")
+    })?;
 
     let order_mode = parse_order(order)?;
     let null_m = parse_null_mode(null_mode)?;
@@ -139,7 +142,8 @@ fn py_to_csvdb(
         output.map(Path::new),
         force,
         &filter,
-    ).map_err(to_py_err)?;
+    )
+    .map_err(to_py_err)?;
 
     Ok(path.to_string_lossy().into_owned())
 }
@@ -177,7 +181,8 @@ fn py_to_csvdb_incremental(
         compress,
         output.map(Path::new),
         &filter,
-    ).map_err(to_py_err)?;
+    )
+    .map_err(to_py_err)?;
 
     let dict = PyDict::new(py);
     dict.set_item("path", path.to_string_lossy().into_owned())?;
@@ -202,7 +207,8 @@ fn py_to_sqlite(
     exclude: Vec<String>,
 ) -> PyResult<String> {
     let filter = TableFilter::new(tables, exclude);
-    let path = to_sqlite::to_sqlite(Path::new(input), output.map(Path::new), force, &filter).map_err(to_py_err)?;
+    let path = to_sqlite::to_sqlite(Path::new(input), output.map(Path::new), force, &filter)
+        .map_err(to_py_err)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -220,7 +226,8 @@ fn py_to_duckdb(
     exclude: Vec<String>,
 ) -> PyResult<String> {
     let filter = TableFilter::new(tables, exclude);
-    let path = to_duckdb::to_duckdb(Path::new(input), output.map(Path::new), force, &filter).map_err(to_py_err)?;
+    let path = to_duckdb::to_duckdb(Path::new(input), output.map(Path::new), force, &filter)
+        .map_err(to_py_err)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -252,7 +259,8 @@ fn py_to_parquetdb(
         output.map(Path::new),
         force,
         &filter,
-    ).map_err(to_py_err)?;
+    )
+    .map_err(to_py_err)?;
 
     Ok(path.to_string_lossy().into_owned())
 }
@@ -264,11 +272,7 @@ fn py_to_parquetdb(
 ///     NULL values are represented as Python None.
 #[pyfunction]
 #[pyo3(name = "sql", signature = (path, query))]
-fn sql_query(
-    py: Python<'_>,
-    path: &str,
-    query: &str,
-) -> PyResult<PyObject> {
+fn sql_query(py: Python<'_>, path: &str, query: &str) -> PyResult<PyObject> {
     let result = sql::sql_query(Path::new(path), query).map_err(to_py_err)?;
 
     let rows = PyList::empty(py);
@@ -293,11 +297,7 @@ fn sql_query(
 ///     SHA256 hash as hex string
 #[pyfunction]
 #[pyo3(name = "checksum", signature = (path, *, tables=vec![], exclude=vec![]))]
-fn checksum_db(
-    path: &str,
-    tables: Vec<String>,
-    exclude: Vec<String>,
-) -> PyResult<String> {
+fn checksum_db(path: &str, tables: Vec<String>, exclude: Vec<String>) -> PyResult<String> {
     let filter = TableFilter::new(tables, exclude);
     checksum::checksum(Path::new(path), &filter).map_err(to_py_err)
 }
@@ -325,10 +325,7 @@ fn diff_db(
 ///     Dict with "table_count", "view_count", "errors", and "warnings"
 #[pyfunction]
 #[pyo3(name = "validate", signature = (path,))]
-fn validate_db(
-    py: Python<'_>,
-    path: &str,
-) -> PyResult<PyObject> {
+fn validate_db(py: Python<'_>, path: &str) -> PyResult<PyObject> {
     let result = validate::validate(Path::new(path)).map_err(to_py_err)?;
 
     let dict = PyDict::new(py);
@@ -362,10 +359,20 @@ fn init_csvdb(
     };
     let filter = TableFilter::new(tables, exclude);
 
-    let result = init::init_csvdb(Path::new(source), output.map(Path::new), force, &filter, &config).map_err(to_py_err)?;
+    let result = init::init_csvdb(
+        Path::new(source),
+        output.map(Path::new),
+        force,
+        &filter,
+        &config,
+    )
+    .map_err(to_py_err)?;
 
     let dict = PyDict::new(py);
-    dict.set_item("output_dir", result.output_dir.to_string_lossy().into_owned())?;
+    dict.set_item(
+        "output_dir",
+        result.output_dir.to_string_lossy().into_owned(),
+    )?;
 
     let tables = PyList::empty(py);
     for t in &result.tables {
@@ -406,7 +413,10 @@ fn batches_to_py_table(py: Python<'_>, batches: Vec<RecordBatch>) -> PyResult<Py
         py_batches.append(batch.to_pyarrow(py)?)?;
     }
 
-    Ok(pa.getattr("Table")?.call_method1("from_batches", (py_batches,))?.into())
+    Ok(pa
+        .getattr("Table")?
+        .call_method1("from_batches", (py_batches,))?
+        .into())
 }
 
 /// Read tables as pyarrow Tables.
@@ -431,7 +441,8 @@ fn py_to_arrow(
         }
         None => {
             let filter = TableFilter::new(tables, exclude);
-            let all_tables = read::read_tables_arrow(Path::new(path), &filter).map_err(to_py_err)?;
+            let all_tables =
+                read::read_tables_arrow(Path::new(path), &filter).map_err(to_py_err)?;
             let dict = PyDict::new(py);
             for (name, batches) in all_tables {
                 let py_table = batches_to_py_table(py, batches)?;
@@ -447,11 +458,7 @@ fn py_to_arrow(
 /// Requires pyarrow to be installed.
 #[pyfunction]
 #[pyo3(name = "sql_arrow", signature = (path, query))]
-fn py_sql_arrow(
-    py: Python<'_>,
-    path: &str,
-    query: &str,
-) -> PyResult<PyObject> {
+fn py_sql_arrow(py: Python<'_>, path: &str, query: &str) -> PyResult<PyObject> {
     let batches = sql::sql_query_arrow(Path::new(path), query).map_err(to_py_err)?;
     batches_to_py_table(py, batches)
 }
@@ -502,8 +509,9 @@ fn py_to_pandas(
     tables: Vec<String>,
     exclude: Vec<String>,
 ) -> PyResult<PyObject> {
-    PyModule::import(py, "pandas")
-        .map_err(|_| PyRuntimeError::new_err("pandas is required. Install with: pip install csvdb-py[pandas]"))?;
+    PyModule::import(py, "pandas").map_err(|_| {
+        PyRuntimeError::new_err("pandas is required. Install with: pip install csvdb-py[pandas]")
+    })?;
     let arrow = py_to_arrow(py, path, table, tables, exclude)?;
     arrow_to_pandas(py, arrow)
 }
@@ -523,8 +531,9 @@ fn py_to_polars(
     tables: Vec<String>,
     exclude: Vec<String>,
 ) -> PyResult<PyObject> {
-    PyModule::import(py, "polars")
-        .map_err(|_| PyRuntimeError::new_err("polars is required. Install with: pip install csvdb-py[polars]"))?;
+    PyModule::import(py, "polars").map_err(|_| {
+        PyRuntimeError::new_err("polars is required. Install with: pip install csvdb-py[polars]")
+    })?;
     let arrow = py_to_arrow(py, path, table, tables, exclude)?;
     arrow_to_polars(py, arrow)
 }
@@ -534,13 +543,10 @@ fn py_to_polars(
 /// Requires pandas and pyarrow to be installed.
 #[pyfunction]
 #[pyo3(name = "sql_pandas", signature = (path, query))]
-fn py_sql_pandas(
-    py: Python<'_>,
-    path: &str,
-    query: &str,
-) -> PyResult<PyObject> {
-    PyModule::import(py, "pandas")
-        .map_err(|_| PyRuntimeError::new_err("pandas is required. Install with: pip install csvdb-py[pandas]"))?;
+fn py_sql_pandas(py: Python<'_>, path: &str, query: &str) -> PyResult<PyObject> {
+    PyModule::import(py, "pandas").map_err(|_| {
+        PyRuntimeError::new_err("pandas is required. Install with: pip install csvdb-py[pandas]")
+    })?;
     let arrow = py_sql_arrow(py, path, query)?;
     arrow_to_pandas(py, arrow)
 }
@@ -550,13 +556,10 @@ fn py_sql_pandas(
 /// Requires polars and pyarrow to be installed.
 #[pyfunction]
 #[pyo3(name = "sql_polars", signature = (path, query))]
-fn py_sql_polars(
-    py: Python<'_>,
-    path: &str,
-    query: &str,
-) -> PyResult<PyObject> {
-    PyModule::import(py, "polars")
-        .map_err(|_| PyRuntimeError::new_err("polars is required. Install with: pip install csvdb-py[polars]"))?;
+fn py_sql_polars(py: Python<'_>, path: &str, query: &str) -> PyResult<PyObject> {
+    PyModule::import(py, "polars").map_err(|_| {
+        PyRuntimeError::new_err("polars is required. Install with: pip install csvdb-py[polars]")
+    })?;
     let arrow = py_sql_arrow(py, path, query)?;
     arrow_to_polars(py, arrow)
 }

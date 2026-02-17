@@ -5,6 +5,15 @@ on:
   workflow_call:
 
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -44,6 +53,14 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
+      - name: Lint Python tests (ruff)
+        run: uv run --with ruff ruff check .
+        working-directory: tests/functional
+
+      - name: Lint Python binding tests (ruff)
+        run: uv run --with ruff ruff check tests/
+        working-directory: csvdb-python
+
       - name: Run functional tests
         run: uv run pytest
         working-directory: tests/functional
@@ -56,7 +73,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cpanminus
-          sudo cpanm -n FFI::Platypus
+          sudo cpanm -n FFI::Platypus Perl::Critic
 
       - name: Install Perl dependencies (macOS)
         if: runner.os == 'macOS'
@@ -72,6 +89,10 @@ jobs:
         run: |
           cpanm -n Alien::FFI
           cpanm -n -v FFI::Platypus || (for /R C:\Users\RUNNER~1\.cpanm\work /F %%f in (build.log) do type "%%f") && exit /b 1
+
+      - name: Lint Perl (perlcritic)
+        if: runner.os == 'Linux'
+        run: perlcritic --severity 4 perl/lib/ perl/t/
 
       - name: Run Perl tests
         run: prove perl/t/

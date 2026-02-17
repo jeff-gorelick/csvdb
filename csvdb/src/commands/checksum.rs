@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::core::{InputFormat, Schema, TableSchema};
 use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::core::table::Table;
-use crate::{OrderMode, NullMode, TableFilter};
+use crate::core::{InputFormat, Schema, TableSchema};
+use crate::{NullMode, OrderMode, TableFilter};
 
 /// Compute a checksum for a database or csvdb directory.
 /// Returns the same hash regardless of format if the data is identical.
@@ -88,7 +88,12 @@ fn checksum_sqlite(db_path: &Path, filter: &TableFilter) -> Result<String> {
         pb.set_message(table_name.clone());
         hash_table_schema(&mut hasher, table_schema);
 
-        let result = Table::from_sqlite_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_sqlite_with_order(
+            &conn,
+            table_schema,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
         hash_table_data(&mut hasher, &result.table);
         pb.inc(1);
     }
@@ -118,7 +123,12 @@ fn checksum_duckdb(db_path: &Path, filter: &TableFilter) -> Result<String> {
         pb.set_message(table_name.clone());
         hash_table_schema(&mut hasher, table_schema);
 
-        let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            table_schema,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
         hash_table_data(&mut hasher, &result.table);
         pb.inc(1);
     }
@@ -159,9 +169,7 @@ fn checksum_parquetdb(parquetdb_dir: &Path, filter: &TableFilter) -> Result<Stri
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             conn.execute(
-                &format!(
-                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
-                ),
+                &format!("INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"),
                 [],
             )?;
         }
@@ -179,7 +187,12 @@ fn checksum_parquetdb(parquetdb_dir: &Path, filter: &TableFilter) -> Result<Stri
         pb.set_message(table_name.clone());
         hash_table_schema(&mut hasher, table_schema);
 
-        let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            table_schema,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
         hash_table_data(&mut hasher, &result.table);
         pb.inc(1);
     }
@@ -211,9 +224,7 @@ fn checksum_parquet(parquet_path: &Path, filter: &TableFilter) -> Result<String>
 
     // Create table from parquet
     conn.execute(
-        &format!(
-            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
-        ),
+        &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"),
         [],
     )?;
 
@@ -222,12 +233,19 @@ fn checksum_parquet(parquet_path: &Path, filter: &TableFilter) -> Result<String>
 
     let mut hasher = Sha256::new();
 
-    let table_schema = schema.tables.get(table_name)
+    let table_schema = schema
+        .tables
+        .get(table_name)
         .ok_or_else(|| anyhow::anyhow!("Table not found after creation"))?;
 
     hash_table_schema(&mut hasher, table_schema);
 
-    let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+    let result = Table::from_duckdb_with_order(
+        &conn,
+        table_schema,
+        OrderMode::AllColumns,
+        NullMode::Marker,
+    )?;
     hash_table_data(&mut hasher, &result.table);
 
     Ok(format!("{:x}", hasher.finalize()))
@@ -256,7 +274,9 @@ fn hash_table_schema(hasher: &mut Sha256, schema: &TableSchema) {
     // Primary key (normalized)
     if !schema.pk_columns.is_empty() {
         hasher.update(b"PK:");
-        let pk_cols: Vec<&str> = schema.pk_columns.iter()
+        let pk_cols: Vec<&str> = schema
+            .pk_columns
+            .iter()
             .filter(|c| c.as_str() != "__csvdb_rowid")
             .map(|s| s.as_str())
             .collect();
@@ -298,8 +318,12 @@ fn normalize_type(col_type: &str) -> &'static str {
     }
 
     // Text types
-    if t.contains("CHAR") || t.contains("TEXT") || t.contains("STRING")
-        || t.contains("VARCHAR") || t.contains("CLOB") {
+    if t.contains("CHAR")
+        || t.contains("TEXT")
+        || t.contains("STRING")
+        || t.contains("VARCHAR")
+        || t.contains("CLOB")
+    {
         return "TEXT";
     }
 
@@ -372,11 +396,10 @@ pub fn normalize_value(value: &str) -> String {
     value.to_string()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{to_csv, to_sqlite, to_duckdb};
+    use crate::commands::{to_csv, to_duckdb, to_sqlite};
     use rusqlite::Connection;
     use tempfile::tempdir;
 
@@ -402,7 +425,17 @@ mod tests {
 
         // Convert to CSV
         let no_filter = TableFilter::new(vec![], vec![]);
-        let csvdb = to_csv::to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &no_filter)?;
+        let csvdb = to_csv::to_csv(
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            false,
+            None,
+            false,
+            None,
+            true,
+            &no_filter,
+        )?;
         let csvdb_checksum = checksum(&csvdb, &TableFilter::new(vec![], vec![]))?;
 
         // Convert to DuckDB
@@ -561,7 +594,13 @@ mod tests {
         // Convert to parquetdb
         let no_filter = TableFilter::new(vec![], vec![]);
         let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
-            &sqlite_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+            &sqlite_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
+            &no_filter,
         )?;
 
         let sqlite_cksum = checksum(&sqlite_path, &no_filter)?;
@@ -585,7 +624,13 @@ mod tests {
         // Create parquetdb, then checksum just the .parquet file
         let no_filter = TableFilter::new(vec![], vec![]);
         let parquetdb = crate::commands::to_parquetdb::to_parquetdb(
-            &sqlite_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+            &sqlite_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
+            &no_filter,
         )?;
 
         let parquet_file = parquetdb.join("t.parquet");
