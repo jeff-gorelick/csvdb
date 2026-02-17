@@ -135,7 +135,7 @@ class TestOrderModes:
         conn.commit()
         conn.close()
 
-        original_checksum = run_csvdb("checksum", "--order=all-columns", str(db_path), check=False)
+        run_csvdb("checksum", "--order=all-columns", str(db_path), check=False)
 
         run_csvdb("to-csvdb", "--order=all-columns", str(db_path))
         run_csvdb("to-sqlite", "--force", str(temp_dir / "all_cols_rt.csvdb"))

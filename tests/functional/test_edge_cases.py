@@ -439,7 +439,7 @@ class TestCaseSensitivity:
         conn.commit()
         conn.close()
 
-        original_checksum = run_csvdb("checksum", str(db_path)).stdout.strip()
+        run_csvdb("checksum", str(db_path))
 
         run_csvdb("to-csvdb", str(db_path))
 
@@ -698,7 +698,6 @@ class TestSqliteCliImport:
     def test_rusqlite_fallback_null_roundtrip(self, run_csvdb, temp_dir, csvdb_bin):
         """NULL handling works via rusqlite fallback when sqlite3 CLI is absent."""
         import sqlite3
-        import subprocess
 
         db_path = temp_dir / "fallback_null.sqlite"
         conn = sqlite3.connect(str(db_path))

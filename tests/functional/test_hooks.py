@@ -1,8 +1,6 @@
 """Functional tests for the hooks command."""
 
-import os
 import subprocess
-from pathlib import Path
 
 
 class TestHooksInstall:
@@ -20,7 +18,7 @@ class TestHooksInstall:
         """hooks install should create pre-commit and post-merge hooks."""
         self._init_git_repo(temp_dir)
 
-        result = run_csvdb("hooks", "install", cwd=temp_dir)
+        run_csvdb("hooks", "install", cwd=temp_dir)
 
         hooks_dir = temp_dir / ".git" / "hooks"
         assert (hooks_dir / "pre-commit").exists()
@@ -76,7 +74,7 @@ class TestHooksInstall:
         hooks_dir.mkdir(parents=True, exist_ok=True)
         (hooks_dir / "pre-commit").write_text("#!/bin/sh\necho custom hook")
 
-        result = run_csvdb("hooks", "uninstall", cwd=temp_dir)
+        run_csvdb("hooks", "uninstall", cwd=temp_dir)
 
         # Custom hook should still exist
         assert (hooks_dir / "pre-commit").exists()

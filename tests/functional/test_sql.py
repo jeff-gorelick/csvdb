@@ -1,7 +1,6 @@
 """Functional tests for the sql command."""
 
 import sqlite3
-from pathlib import Path
 
 
 class TestSql:

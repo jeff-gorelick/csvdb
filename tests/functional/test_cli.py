@@ -1,7 +1,6 @@
 """Functional tests for CLI behavior, flags, and determinism."""
 
 import sqlite3
-from pathlib import Path
 
 
 class TestCLIBehavior:
@@ -31,13 +30,13 @@ class TestCLIBehavior:
     def test_to_csv_output_flag_short(self, run_csvdb, sample_sqlite, temp_dir):
         """-o flag should work for output."""
         output_dir = temp_dir / "out1.csvdb"
-        result = run_csvdb("to-csvdb", "-o", str(output_dir), str(sample_sqlite))
+        run_csvdb("to-csvdb", "-o", str(output_dir), str(sample_sqlite))
         assert output_dir.exists()
 
     def test_to_csv_output_flag_long(self, run_csvdb, sample_sqlite, temp_dir):
         """--output flag should work for output."""
         output_dir = temp_dir / "out2.csvdb"
-        result = run_csvdb("to-csvdb", "--output", str(output_dir), str(sample_sqlite))
+        run_csvdb("to-csvdb", "--output", str(output_dir), str(sample_sqlite))
         assert output_dir.exists()
 
 
