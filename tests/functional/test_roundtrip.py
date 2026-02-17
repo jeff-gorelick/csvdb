@@ -1,7 +1,6 @@
 """Functional tests for roundtrip conversions."""
 
 import sqlite3
-from pathlib import Path
 
 
 class TestRoundtrip:
@@ -163,9 +162,8 @@ class TestAdvancedRoundtrips:
 
     def test_multi_table_roundtrip(self, run_csvdb, temp_dir):
         """Roundtrip with multiple related tables."""
-        try:
-            import duckdb
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("duckdb") is None:
             import pytest
             pytest.skip("duckdb not installed")
 
@@ -274,9 +272,8 @@ class TestAdvancedRoundtrips:
 
     def test_views_survive_full_chain(self, run_csvdb, temp_dir):
         """Views should survive the full DuckDB -> CSV -> SQLite -> CSV -> DuckDB chain."""
-        try:
-            import duckdb
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("duckdb") is None:
             import pytest
             pytest.skip("duckdb not installed")
 

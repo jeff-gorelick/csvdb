@@ -1,7 +1,5 @@
 """Functional tests for the validate command."""
 
-import sqlite3
-from pathlib import Path
 
 
 class TestValidate:

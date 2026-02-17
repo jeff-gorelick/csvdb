@@ -1,7 +1,6 @@
 """Functional tests for the diff command."""
 
 import sqlite3
-from pathlib import Path
 
 
 class TestDiff:
@@ -103,7 +102,7 @@ class TestDiff:
         # Summary should have counts but no detail lines (no + or ~ prefixed lines)
         assert "added" in result.stdout
         lines = result.stdout.strip().split("\n")
-        detail_lines = [l for l in lines if l.strip().startswith("+") or l.strip().startswith("~")]
+        detail_lines = [line for line in lines if line.strip().startswith("+") or line.strip().startswith("~")]
         assert len(detail_lines) == 0
 
 

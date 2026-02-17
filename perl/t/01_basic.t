@@ -34,7 +34,7 @@ unless ($lib) {
     plan skip_all => "libcsvdb_ffi not found. Build with: cargo build --release -p csvdb-ffi";
 }
 
-$ENV{CSVDB_FFI_LIB} = $lib;
+local $ENV{CSVDB_FFI_LIB} = $lib;
 require Csvdb;
 
 plan tests => 25;
@@ -45,13 +45,13 @@ sub make_csvdb {
     my $csvdb_dir = File::Spec->catdir($dir, "test.csvdb");
     mkdir $csvdb_dir;
 
-    open my $fh, '>', File::Spec->catfile($csvdb_dir, 'schema.sql') or die $!;
-    print $fh qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
-    close $fh;
+    open my $sfh, '>', File::Spec->catfile($csvdb_dir, 'schema.sql') or die $!;
+    print $sfh qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
+    close $sfh;
 
-    open $fh, '>', File::Spec->catfile($csvdb_dir, 'users.csv') or die $!;
-    print $fh "id,name\n1,Alice\n2,Bob\n";
-    close $fh;
+    open my $cfh, '>', File::Spec->catfile($csvdb_dir, 'users.csv') or die $!;
+    print $cfh "id,name\n1,Alice\n2,Bob\n";
+    close $cfh;
 
     return $csvdb_dir;
 }
@@ -70,18 +70,18 @@ sub make_multi_csvdb {
     my $csvdb_dir = File::Spec->catdir($dir, "multi.csvdb");
     mkdir $csvdb_dir;
 
-    open my $fh, '>', File::Spec->catfile($csvdb_dir, 'schema.sql') or die $!;
-    print $fh qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
-    print $fh qq{CREATE TABLE "orders" (\n    "id" INTEGER PRIMARY KEY,\n    "user_id" INTEGER,\n    "amount" REAL\n);\n};
-    close $fh;
+    open my $sfh, '>', File::Spec->catfile($csvdb_dir, 'schema.sql') or die $!;
+    print $sfh qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
+    print $sfh qq{CREATE TABLE "orders" (\n    "id" INTEGER PRIMARY KEY,\n    "user_id" INTEGER,\n    "amount" REAL\n);\n};
+    close $sfh;
 
-    open $fh, '>', File::Spec->catfile($csvdb_dir, 'users.csv') or die $!;
-    print $fh "id,name\n1,Alice\n2,Bob\n";
-    close $fh;
+    open my $ufh, '>', File::Spec->catfile($csvdb_dir, 'users.csv') or die $!;
+    print $ufh "id,name\n1,Alice\n2,Bob\n";
+    close $ufh;
 
-    open $fh, '>', File::Spec->catfile($csvdb_dir, 'orders.csv') or die $!;
-    print $fh "id,user_id,amount\n100,1,99.99\n101,2,49.50\n";
-    close $fh;
+    open my $ofh, '>', File::Spec->catfile($csvdb_dir, 'orders.csv') or die $!;
+    print $ofh "id,user_id,amount\n100,1,99.99\n101,2,49.50\n";
+    close $ofh;
 
     return $csvdb_dir;
 }

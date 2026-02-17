@@ -1,7 +1,6 @@
 """Functional tests for the to-duckdb command."""
 
 import sqlite3
-from pathlib import Path
 
 
 class TestToDuckdb:
@@ -17,11 +16,11 @@ class TestToDuckdb:
 
     def test_to_duckdb_data_accessible(self, run_csvdb, sample_csvdb):
         """to-duckdb should create queryable database."""
-        try:
-            import duckdb
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("duckdb") is None:
             import pytest
             pytest.skip("duckdb not installed")
+        import duckdb
 
         run_csvdb("to-duckdb", "--force", str(sample_csvdb))
 
@@ -39,11 +38,11 @@ class TestForeignKeys:
 
     def test_fk_tables_to_duckdb(self, run_csvdb, temp_dir):
         """Tables with foreign keys should convert to DuckDB successfully."""
-        try:
-            import duckdb
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("duckdb") is None:
             import pytest
             pytest.skip("duckdb not installed")
+        import duckdb
 
         # Create SQLite with FK relationship: orders references users
         db_path = temp_dir / "fk_test.sqlite"
@@ -111,11 +110,11 @@ class TestForeignKeys:
 
     def test_fk_chain_to_duckdb(self, run_csvdb, temp_dir):
         """Three-level FK chain should convert to DuckDB successfully."""
-        try:
-            import duckdb
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("duckdb") is None:
             import pytest
             pytest.skip("duckdb not installed")
+        import duckdb
 
         db_path = temp_dir / "fk_chain.sqlite"
         conn = sqlite3.connect(db_path)
@@ -188,9 +187,8 @@ class TestIndexRoundtripDuckDB:
 
     def test_duckdb_data_preserved(self, run_csvdb, temp_dir):
         """Data should be preserved through DuckDB even if indexes aren't."""
-        try:
-            import duckdb
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("duckdb") is None:
             import pytest
             pytest.skip("duckdb not installed")
 

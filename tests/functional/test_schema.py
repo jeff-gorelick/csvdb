@@ -1,7 +1,6 @@
 """Functional tests for schema handling: views, indexes, and edge cases."""
 
 import sqlite3
-from pathlib import Path
 
 
 class TestViews:

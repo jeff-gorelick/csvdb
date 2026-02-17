@@ -1,6 +1,5 @@
 """Pytest configuration and fixtures for csvdb functional tests."""
 
-import os
 import subprocess
 import pytest
 from pathlib import Path

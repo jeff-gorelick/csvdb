@@ -1,7 +1,6 @@
 """Functional tests for the init command."""
 
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -17,7 +16,7 @@ class TestInit:
         (csv_dir / "data.csv").write_text(sample_csv.read_text())
 
         # Run init
-        result = run_csvdb("init", str(csv_dir))
+        run_csvdb("init", str(csv_dir))
 
         # Check output directory was created
         csvdb_dir = temp_dir / "raw_csvs.csvdb"

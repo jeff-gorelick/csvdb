@@ -2,7 +2,6 @@
 
 import subprocess
 import time
-import os
 import threading
 
 
@@ -125,11 +124,11 @@ class TestWatch:
         schema_path.write_text(original_schema)
 
         # Wait for successful rebuild (second "Built:" after the error)
-        built_count_before = sum(1 for l in lines if "Built:" in l)
+        built_count_before = sum(1 for line in lines if "Built:" in line)
         deadline = time.time() + 10
         rebuilt = False
         while time.time() < deadline:
-            built_count = sum(1 for l in lines if "Built:" in l)
+            built_count = sum(1 for line in lines if "Built:" in line)
             if built_count > built_count_before:
                 rebuilt = True
                 break
