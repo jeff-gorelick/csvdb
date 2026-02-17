@@ -47,15 +47,16 @@ $ffi->attach(csvdb_version     => []                              => 'string');
 $ffi->attach(csvdb_last_error  => []                              => 'string');
 $ffi->attach(csvdb_free_string => ['opaque']                      => 'void');
 
-$ffi->attach(csvdb_to_csvdb    => ['string','string','string','string','int','string','string'] => 'opaque');
+$ffi->attach(csvdb_to_csvdb    => ['string','string','string','string','int','string','string','int','string','int'] => 'opaque');
+$ffi->attach(csvdb_to_csvdb_incremental => ['string','string','string','string','string','string','int','string','int'] => 'opaque');
 $ffi->attach(csvdb_to_sqlite   => ['string','string','int','string','string']       => 'opaque');
 $ffi->attach(csvdb_to_duckdb   => ['string','string','int','string','string']       => 'opaque');
-$ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int','string','string'] => 'opaque');
+$ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int','string','string','string'] => 'opaque');
 $ffi->attach(csvdb_checksum    => ['string','string','string']    => 'opaque');
 $ffi->attach(csvdb_diff        => ['string','string','int','string','string'] => 'int');
 $ffi->attach(csvdb_validate    => ['string']                      => 'int');
 $ffi->attach(csvdb_sql         => ['string','string']             => 'opaque');
-$ffi->attach(csvdb_init        => ['string','string','int','string','string'] => 'opaque');
+$ffi->attach(csvdb_init        => ['string','string','int','string','string','int','int'] => 'opaque');
 
 # Helper: read and free a returned string, or die with last error
 sub _read_string {
@@ -77,14 +78,31 @@ sub version {
 
 sub to_csvdb {
     my (%args) = @_;
-    my $input     = $args{input}     // croak "input is required";
-    my $output    = $args{output}    // undef;
-    my $order     = $args{order}     // undef;
-    my $null_mode = $args{null_mode} // undef;
-    my $force     = $args{force}     ? 1 : 0;
-    my $tables    = $args{tables}    // undef;
-    my $exclude   = $args{exclude}   // undef;
-    return _read_string(csvdb_to_csvdb($input, $output, $order, $null_mode, $force, $tables, $exclude));
+    my $input        = $args{input}        // croak "input is required";
+    my $output       = $args{output}       // undef;
+    my $order        = $args{order}        // undef;
+    my $null_mode    = $args{null_mode}    // undef;
+    my $force        = $args{force}        ? 1 : 0;
+    my $tables       = $args{tables}       // undef;
+    my $exclude      = $args{exclude}      // undef;
+    my $natural_sort = $args{natural_sort} ? 1 : 0;
+    my $order_by     = $args{order_by}     // undef;
+    my $compress     = $args{compress}     ? 1 : 0;
+    return _read_string(csvdb_to_csvdb($input, $output, $order, $null_mode, $force, $tables, $exclude, $natural_sort, $order_by, $compress));
+}
+
+sub to_csvdb_incremental {
+    my (%args) = @_;
+    my $input        = $args{input}        // croak "input is required";
+    my $output       = $args{output}       // undef;
+    my $order        = $args{order}        // undef;
+    my $null_mode    = $args{null_mode}    // undef;
+    my $tables       = $args{tables}       // undef;
+    my $exclude      = $args{exclude}      // undef;
+    my $natural_sort = $args{natural_sort} ? 1 : 0;
+    my $order_by     = $args{order_by}     // undef;
+    my $compress     = $args{compress}     ? 1 : 0;
+    return _read_string(csvdb_to_csvdb_incremental($input, $output, $order, $null_mode, $tables, $exclude, $natural_sort, $order_by, $compress));
 }
 
 sub to_sqlite {
@@ -116,7 +134,8 @@ sub to_parquetdb {
     my $force     = $args{force}     ? 1 : 0;
     my $tables    = $args{tables}    // undef;
     my $exclude   = $args{exclude}   // undef;
-    return _read_string(csvdb_to_parquetdb($input, $output, $order, $null_mode, $force, $tables, $exclude));
+    my $order_by  = $args{order_by}  // undef;
+    return _read_string(csvdb_to_parquetdb($input, $output, $order, $null_mode, $force, $tables, $exclude, $order_by));
 }
 
 sub checksum {
@@ -162,12 +181,14 @@ sub sql {
 
 sub init {
     my (%args) = @_;
-    my $source  = $args{source}  // croak "source is required";
-    my $output  = $args{output}  // undef;
-    my $force   = $args{force}   ? 1 : 0;
-    my $tables  = $args{tables}  // undef;
-    my $exclude = $args{exclude} // undef;
-    return _read_string(csvdb_init($source, $output, $force, $tables, $exclude));
+    my $source    = $args{source}    // croak "source is required";
+    my $output    = $args{output}    // undef;
+    my $force     = $args{force}     ? 1 : 0;
+    my $tables    = $args{tables}    // undef;
+    my $exclude   = $args{exclude}   // undef;
+    my $detect_pk = exists $args{detect_pk} ? ($args{detect_pk} ? 1 : 0) : 1;
+    my $detect_fk = exists $args{detect_fk} ? ($args{detect_fk} ? 1 : 0) : 1;
+    return _read_string(csvdb_init($source, $output, $force, $tables, $exclude, $detect_pk, $detect_fk));
 }
 
 1;

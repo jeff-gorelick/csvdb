@@ -79,6 +79,9 @@ pub unsafe extern "C" fn csvdb_to_csvdb(
     force: c_int,
     tables: *const c_char,
     exclude: *const c_char,
+    natural_sort: c_int,
+    order_by: *const c_char,
+    compress: c_int,
 ) -> *mut c_char {
     clear_error();
     let input = match unsafe { to_str(input) } {
@@ -89,19 +92,78 @@ pub unsafe extern "C" fn csvdb_to_csvdb(
     let order_mode = parse_order(unsafe { to_str(order) });
     let null_m = parse_null_mode(unsafe { to_str(null_mode) });
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
+    let order_by_str = unsafe { to_str(order_by) };
 
     match to_csv::to_csv(
         Path::new(input),
         order_mode,
         null_m,
-        false,
-        None,
-        false,
+        natural_sort != 0,
+        order_by_str,
+        compress != 0,
         output.map(Path::new),
         force != 0,
         &filter,
     ) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
+        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+    }
+}
+
+/// Convert any supported format to a .csvdb directory (incremental mode).
+///
+/// Only re-exports tables whose data has changed. Returns a JSON string with
+/// `path`, `unchanged`, `updated`, `added`, and `removed` fields.
+/// Returns NULL on error.
+///
+/// # Safety
+///
+/// All pointer parameters must be valid NUL-terminated C strings or null.
+/// Caller must free the returned string with `csvdb_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn csvdb_to_csvdb_incremental(
+    input: *const c_char,
+    output: *const c_char,
+    order: *const c_char,
+    null_mode: *const c_char,
+    tables: *const c_char,
+    exclude: *const c_char,
+    natural_sort: c_int,
+    order_by: *const c_char,
+    compress: c_int,
+) -> *mut c_char {
+    clear_error();
+    let input = match unsafe { to_str(input) } {
+        Some(s) => s,
+        None => { set_error("input is null".into()); return ptr::null_mut(); }
+    };
+    let output = unsafe { to_str(output) };
+    let order_mode = parse_order(unsafe { to_str(order) });
+    let null_m = parse_null_mode(unsafe { to_str(null_mode) });
+    let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
+    let order_by_str = unsafe { to_str(order_by) };
+
+    match to_csv::to_csv_incremental(
+        Path::new(input),
+        order_mode,
+        null_m,
+        natural_sort != 0,
+        order_by_str,
+        compress != 0,
+        output.map(Path::new),
+        &filter,
+    ) {
+        Ok((path, summary)) => {
+            let json = format!(
+                r#"{{"path":"{}","unchanged":[{}],"updated":[{}],"added":[{}],"removed":[{}]}}"#,
+                path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""),
+                summary.unchanged.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+                summary.updated.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+                summary.added.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+                summary.removed.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+            );
+            to_cstring(&json)
+        }
         Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
     }
 }
@@ -183,6 +245,7 @@ pub unsafe extern "C" fn csvdb_to_parquetdb(
     force: c_int,
     tables: *const c_char,
     exclude: *const c_char,
+    order_by: *const c_char,
 ) -> *mut c_char {
     clear_error();
     let input = match unsafe { to_str(input) } {
@@ -193,12 +256,13 @@ pub unsafe extern "C" fn csvdb_to_parquetdb(
     let order_mode = parse_order(unsafe { to_str(order) });
     let null_m = parse_null_mode(unsafe { to_str(null_mode) });
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
+    let order_by_str = unsafe { to_str(order_by) };
 
     match to_parquetdb::to_parquetdb(
         Path::new(input),
         order_mode,
         null_m,
-        None,
+        order_by_str,
         output.map(Path::new),
         force != 0,
         &filter,
@@ -355,6 +419,8 @@ pub unsafe extern "C" fn csvdb_init(
     force: c_int,
     tables: *const c_char,
     exclude: *const c_char,
+    detect_pk: c_int,
+    detect_fk: c_int,
 ) -> *mut c_char {
     clear_error();
     let source = match unsafe { to_str(source) } {
@@ -364,7 +430,11 @@ pub unsafe extern "C" fn csvdb_init(
     let output = unsafe { to_str(output) };
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
-    let config = init::InferConfig::default();
+    let config = init::InferConfig {
+        detect_pk: detect_pk != 0,
+        detect_fk: detect_fk != 0,
+        ..Default::default()
+    };
     match init::init_csvdb(Path::new(source), output.map(Path::new), force != 0, &filter, &config) {
         Ok(result) => to_cstring(&result.output_dir.to_string_lossy()),
         Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
