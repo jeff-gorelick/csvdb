@@ -12,8 +12,19 @@ license = "MIT"
 authors = [{name = "Jeff Gorelick", email = "jeffrey.gorelick@gmail.com"}]
 keywords = ["csv", "sqlite", "duckdb", "parquet", "database"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
 ]
 
 [project.urls]
