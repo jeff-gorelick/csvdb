@@ -117,7 +117,7 @@ jobs:
           docker-options: -e CXXFLAGS=-D_GLIBCXX_USE_CXX11_ABI=1
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-${{ matrix.os }}
           path: csvdb-python/dist/
@@ -142,7 +142,7 @@ jobs:
           working-directory: csvdb-python
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-sdist
           path: csvdb-python/dist/
@@ -228,7 +228,7 @@ jobs:
           docker-options: -e CXXFLAGS=-D_GLIBCXX_USE_CXX11_ABI=1
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cli-wheels-${{ matrix.os }}
           path: csvdb-cli/dist/
