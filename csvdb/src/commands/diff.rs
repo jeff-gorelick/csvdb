@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::core::{InputFormat, Schema, Table};
-use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::commands::checksum::normalize_value;
-use crate::{OrderMode, NullMode, TableFilter};
+use crate::core::csv::{find_table_file, read_table_csv_auto};
+use crate::core::{InputFormat, Schema, Table};
+use crate::{NullMode, OrderMode, TableFilter};
 
 /// Load tables from any supported format.
 /// Returns (Schema, map of table_name -> Table).
@@ -41,14 +41,14 @@ fn load_csvdb(csvdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
 fn rebuild_pk_from_schema(table: &mut Table, schema: &Schema) {
     if let Some(table_schema) = schema.tables.get(&table.name) {
         if !table_schema.pk_columns.is_empty() {
-            let pk_indices: Vec<usize> = table_schema.pk_columns.iter()
+            let pk_indices: Vec<usize> = table_schema
+                .pk_columns
+                .iter()
                 .filter_map(|pk| table.columns.iter().position(|c| c == pk))
                 .collect();
             table.pk_columns = table_schema.pk_columns.clone();
             for row in &mut table.rows {
-                row.pk_values = pk_indices.iter()
-                    .map(|&i| row.values[i].clone())
-                    .collect();
+                row.pk_values = pk_indices.iter().map(|&i| row.values[i].clone()).collect();
             }
         }
     }
@@ -62,7 +62,12 @@ fn load_sqlite(db_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
 
     let mut tables = BTreeMap::new();
     for (table_name, table_schema) in &schema.tables {
-        let result = Table::from_sqlite_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_sqlite_with_order(
+            &conn,
+            table_schema,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
         let mut table = result.table;
         // Rebuild PK from actual schema (AllColumns mode uses all columns as pseudo-PK)
         rebuild_pk_from_schema(&mut table, &schema);
@@ -80,7 +85,12 @@ fn load_duckdb(db_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
 
     let mut tables = BTreeMap::new();
     for (table_name, table_schema) in &schema.tables {
-        let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            table_schema,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
         let mut table = result.table;
         // Rebuild PK from actual schema (AllColumns mode uses all columns as pseudo-PK)
         rebuild_pk_from_schema(&mut table, &schema);
@@ -119,9 +129,7 @@ fn load_parquetdb(parquetdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Tabl
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             conn.execute(
-                &format!(
-                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
-                ),
+                &format!("INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"),
                 [],
             )?;
         }
@@ -129,7 +137,12 @@ fn load_parquetdb(parquetdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Tabl
 
     let mut tables = BTreeMap::new();
     for (table_name, table_schema) in &schema.tables {
-        let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            table_schema,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
         let mut table = result.table;
         rebuild_pk_from_schema(&mut table, &schema);
         tables.insert(table_name.clone(), table);
@@ -154,9 +167,7 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
 
     // Create table from parquet
     conn.execute(
-        &format!(
-            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
-        ),
+        &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"),
         [],
     )?;
 
@@ -164,10 +175,17 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
     let schema = Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
 
     let mut tables = BTreeMap::new();
-    let table_schema = schema.tables.get(table_name)
+    let table_schema = schema
+        .tables
+        .get(table_name)
         .ok_or_else(|| anyhow::anyhow!("Table not found after creation"))?;
 
-    let result = Table::from_duckdb_with_order(&conn, table_schema, OrderMode::AllColumns, NullMode::Marker)?;
+    let result = Table::from_duckdb_with_order(
+        &conn,
+        table_schema,
+        OrderMode::AllColumns,
+        NullMode::Marker,
+    )?;
     let mut table = result.table;
     rebuild_pk_from_schema(&mut table, &schema);
     tables.insert(table_name.to_string(), table);
@@ -177,7 +195,12 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
 
 /// Compare two sources and print differences.
 /// Returns true if there are any differences.
-pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFilter) -> Result<bool> {
+pub fn diff(
+    left_path: &Path,
+    right_path: &Path,
+    summary: bool,
+    filter: &TableFilter,
+) -> Result<bool> {
     let (left_schema, left_tables) = load_tables(left_path)
         .with_context(|| format!("Failed to load left: {}", left_path.display()))?;
     let (right_schema, right_tables) = load_tables(right_path)
@@ -237,7 +260,9 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
                 Some(right_row) => {
                     if left_row.content_hash() != right_row.content_hash() {
                         // Compare with normalized values to ignore float formatting differences
-                        let values_differ = left_row.values.iter()
+                        let values_differ = left_row
+                            .values
+                            .iter()
                             .zip(right_row.values.iter())
                             .any(|(lv, rv)| normalize_value(lv) != normalize_value(rv));
                         if values_differ {
@@ -256,11 +281,7 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
         }
 
         if added.is_empty() && deleted.is_empty() && modified.is_empty() {
-            println!(
-                "{}: identical ({} rows)",
-                table_name,
-                left_table.rows.len()
-            );
+            println!("{}: identical ({} rows)", table_name, left_table.rows.len());
             continue;
         }
 
@@ -291,10 +312,7 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
-                    let col = pk_col_names
-                        .get(i)
-                        .map(|s| s.as_str())
-                        .unwrap_or("?");
+                    let col = pk_col_names.get(i).map(|s| s.as_str()).unwrap_or("?");
                     format!("{col}={v}")
                 })
                 .collect::<Vec<_>>()
@@ -309,16 +327,13 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| {
-                    right_table
-                        .pk_columns
-                        .iter()
-                        .all(|pk_col| {
-                            right_table
-                                .columns
-                                .get(*i)
-                                .map(|c| c != pk_col)
-                                .unwrap_or(true)
-                        })
+                    right_table.pk_columns.iter().all(|pk_col| {
+                        right_table
+                            .columns
+                            .get(*i)
+                            .map(|c| c != pk_col)
+                            .unwrap_or(true)
+                    })
                 })
                 .map(|(_, v)| v.clone())
                 .collect();
@@ -333,16 +348,13 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| {
-                    left_table
-                        .pk_columns
-                        .iter()
-                        .all(|pk_col| {
-                            left_table
-                                .columns
-                                .get(*i)
-                                .map(|c| c != pk_col)
-                                .unwrap_or(true)
-                        })
+                    left_table.pk_columns.iter().all(|pk_col| {
+                        left_table
+                            .columns
+                            .get(*i)
+                            .map(|c| c != pk_col)
+                            .unwrap_or(true)
+                    })
                 })
                 .map(|(_, v)| v.clone())
                 .collect();
@@ -361,11 +373,7 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
                 .enumerate()
             {
                 if normalize_value(lv) != normalize_value(rv) {
-                    let col_name = left_table
-                        .columns
-                        .get(i)
-                        .map(|s| s.as_str())
-                        .unwrap_or("?");
+                    let col_name = left_table.columns.get(i).map(|s| s.as_str()).unwrap_or("?");
                     println!(
                         "  ~ ({}) {}: \"{}\" \u{2192} \"{}\"",
                         pk_display(pk),
@@ -386,10 +394,10 @@ pub fn diff(left_path: &Path, right_path: &Path, summary: bool, filter: &TableFi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TableFilter;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
-    use crate::TableFilter;
 
     /// Helper: create a minimal csvdb dir with one table.
     fn make_csvdb(base: &Path, name: &str, schema_sql: &str, csvs: &[(&str, &str)]) -> PathBuf {
@@ -420,8 +428,18 @@ mod tests {
     #[test]
     fn test_diff_added_rows() -> Result<()> {
         let dir = tempdir()?;
-        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
-        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n2,Bob\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n2,Bob\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
@@ -431,8 +449,18 @@ mod tests {
     #[test]
     fn test_diff_deleted_rows() -> Result<()> {
         let dir = tempdir()?;
-        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n2,Bob\n")]);
-        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n2,Bob\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
@@ -442,8 +470,18 @@ mod tests {
     #[test]
     fn test_diff_modified_rows() -> Result<()> {
         let dir = tempdir()?;
-        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
-        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alicia\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alicia\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
@@ -453,14 +491,21 @@ mod tests {
     #[test]
     fn test_diff_added_table() -> Result<()> {
         let dir = tempdir()?;
-        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
 
         let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
                         CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
-        let right = make_csvdb(dir.path(), "b.csvdb", schema2, &[
-            ("t", "id,name\n1,Alice\n"),
-            ("t2", "id,val\n1,x\n"),
-        ]);
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            schema2,
+            &[("t", "id,name\n1,Alice\n"), ("t2", "id,val\n1,x\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
@@ -470,10 +515,21 @@ mod tests {
     #[test]
     fn test_diff_ignores_float_formatting() -> Result<()> {
         let dir = tempdir()?;
-        let schema = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"price\" REAL\n);\n";
+        let schema =
+            "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"price\" REAL\n);\n";
         // Same numeric values, different string representations
-        let left = make_csvdb(dir.path(), "a.csvdb", schema, &[("t", "id,price\n1,32\n2,24.5\n3,149\n")]);
-        let right = make_csvdb(dir.path(), "b.csvdb", schema, &[("t", "id,price\n1,32.00\n2,24.50\n3,149.00\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            schema,
+            &[("t", "id,price\n1,32\n2,24.5\n3,149\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            schema,
+            &[("t", "id,price\n1,32.00\n2,24.50\n3,149.00\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(!has_diff, "float formatting differences should be ignored");
@@ -485,19 +541,42 @@ mod tests {
         let dir = tempdir()?;
         let schema = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"price\" REAL,\n    \"category_id\" INTEGER\n);\n";
         // price differs only in formatting, but category_id has a real change
-        let left = make_csvdb(dir.path(), "a.csvdb", schema, &[("t", "id,price,category_id\n1,32,3\n")]);
-        let right = make_csvdb(dir.path(), "b.csvdb", schema, &[("t", "id,price,category_id\n1,32.00,32\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            schema,
+            &[("t", "id,price,category_id\n1,32,3\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            schema,
+            &[("t", "id,price,category_id\n1,32.00,32\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
-        assert!(has_diff, "real data change should be detected despite float noise");
+        assert!(
+            has_diff,
+            "real data change should be detected despite float noise"
+        );
         Ok(())
     }
 
     #[test]
     fn test_diff_summary_mode() -> Result<()> {
         let dir = tempdir()?;
-        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
-        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alicia\n2,Bob\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alicia\n2,Bob\n")],
+        );
 
         // summary=true should not panic and should still detect differences
         let has_diff = diff(&left, &right, true, &TableFilter::new(vec![], vec![]))?;
@@ -510,11 +589,18 @@ mod tests {
         let dir = tempdir()?;
         let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
                         CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
-        let left = make_csvdb(dir.path(), "a.csvdb", schema2, &[
-            ("t", "id,name\n1,Alice\n"),
-            ("t2", "id,val\n1,x\n"),
-        ]);
-        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", "id,name\n1,Alice\n")]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            schema2,
+            &[("t", "id,name\n1,Alice\n"), ("t2", "id,val\n1,x\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
 
         let has_diff = diff(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
         assert!(has_diff);
@@ -526,17 +612,26 @@ mod tests {
         let dir = tempdir()?;
         let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
                         CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
-        let left = make_csvdb(dir.path(), "a.csvdb", schema2, &[
-            ("t", "id,name\n1,Alice\n"),
-            ("t2", "id,val\n1,x\n"),
-        ]);
-        let right = make_csvdb(dir.path(), "b.csvdb", schema2, &[
-            ("t", "id,name\n1,Alice\n"),
-            ("t2", "id,val\n1,changed\n"),
-        ]);
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            schema2,
+            &[("t", "id,name\n1,Alice\n"), ("t2", "id,val\n1,x\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            schema2,
+            &[("t", "id,name\n1,Alice\n"), ("t2", "id,val\n1,changed\n")],
+        );
 
         // Filter to only t (which is identical) — no diff expected
-        let has_diff = diff(&left, &right, false, &TableFilter::new(vec!["t".to_string()], vec![]))?;
+        let has_diff = diff(
+            &left,
+            &right,
+            false,
+            &TableFilter::new(vec!["t".to_string()], vec![]),
+        )?;
         assert!(!has_diff);
 
         // Without filter — t2 differs
@@ -553,20 +648,34 @@ mod tests {
 
         {
             let conn = rusqlite::Connection::open(&db1_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'hello')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", [])
+                .unwrap();
         }
         {
             let conn = rusqlite::Connection::open(&db2_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'world')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'world')", [])
+                .unwrap();
         }
 
-        let has_diff = diff(&db1_path, &db2_path, false, &TableFilter::new(vec![], vec![]))?;
+        let has_diff = diff(
+            &db1_path,
+            &db2_path,
+            false,
+            &TableFilter::new(vec![], vec![]),
+        )?;
         assert!(has_diff);
 
         // Same data should show no diff
-        let has_diff = diff(&db1_path, &db1_path, false, &TableFilter::new(vec![], vec![]))?;
+        let has_diff = diff(
+            &db1_path,
+            &db1_path,
+            false,
+            &TableFilter::new(vec![], vec![]),
+        )?;
         assert!(!has_diff);
         Ok(())
     }
@@ -579,16 +688,25 @@ mod tests {
 
         {
             let conn = duckdb::Connection::open(&db1_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'hello')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'hello')", [])
+                .unwrap();
         }
         {
             let conn = duckdb::Connection::open(&db2_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'world')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val VARCHAR)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'world')", [])
+                .unwrap();
         }
 
-        let has_diff = diff(&db1_path, &db2_path, false, &TableFilter::new(vec![], vec![]))?;
+        let has_diff = diff(
+            &db1_path,
+            &db2_path,
+            false,
+            &TableFilter::new(vec![], vec![]),
+        )?;
         assert!(has_diff);
         Ok(())
     }
@@ -601,21 +719,37 @@ mod tests {
 
         {
             let conn = rusqlite::Connection::open(&db1_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'same')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'same')", [])
+                .unwrap();
         }
         {
             let conn = rusqlite::Connection::open(&db2_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'same')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'same')", [])
+                .unwrap();
         }
 
         let no_filter = TableFilter::new(vec![], vec![]);
         let pdb1 = crate::commands::to_parquetdb::to_parquetdb(
-            &db1_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+            &db1_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
+            &no_filter,
         )?;
         let pdb2 = crate::commands::to_parquetdb::to_parquetdb(
-            &db2_path, OrderMode::Pk, NullMode::Marker, None, None, true, &no_filter,
+            &db2_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
+            &no_filter,
         )?;
 
         let has_diff = diff(&pdb1, &pdb2, false, &no_filter)?;
@@ -630,14 +764,24 @@ mod tests {
 
         {
             let conn = rusqlite::Connection::open(&db_path).unwrap();
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", []).unwrap();
-            conn.execute("INSERT INTO t VALUES (1, 'cross')", []).unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t VALUES (1, 'cross')", [])
+                .unwrap();
         }
 
         // sqlite -> csvdb
         let no_filter = TableFilter::new(vec![], vec![]);
         let csvdb = crate::commands::to_csv::to_csv(
-            &db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &no_filter,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            false,
+            None,
+            false,
+            None,
+            true,
+            &no_filter,
         )?;
 
         // Diff sqlite vs csvdb should show no differences (same data)

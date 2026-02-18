@@ -10,7 +10,12 @@ use crate::core::{InputFormat, Schema};
 use crate::{NullMode, OrderMode, TableFilter};
 
 /// Convert any supported format to a DuckDB database.
-pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+pub fn to_duckdb(
+    input_path: &Path,
+    output: Option<&Path>,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<PathBuf> {
     let input_format = InputFormat::from_path(input_path)?;
 
     // For non-csvdb formats, convert to csvdb first in a temp directory
@@ -50,10 +55,7 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
             .or_else(|| stem.strip_suffix(".parquetdb"))
             .unwrap_or(stem);
         let db_name = format!("{stem}.duckdb");
-        input_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(db_name)
+        input_path.parent().unwrap_or(Path::new(".")).join(db_name)
     };
 
     // Check for existing database
@@ -102,7 +104,8 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
         pb.set_message(table_name.to_string());
         if let Some(csv_path) = find_table_file(&csvdb_dir, table_name) {
             // Get absolute path and convert to forward slashes for DuckDB
-            let abs_path = csv_path.canonicalize()
+            let abs_path = csv_path
+                .canonicalize()
                 .with_context(|| format!("Failed to get absolute path: {}", csv_path.display()))?;
             let path_str = abs_path.to_string_lossy().replace('\\', "/");
 
@@ -110,9 +113,7 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             // DuckDB natively reads .csv.gz files
-            let copy_sql = format!(
-                "COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"
-            );
+            let copy_sql = format!("COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')");
             conn.execute(&copy_sql, [])
                 .with_context(|| format!("Failed to import CSV for table {table_name}"))?;
         }
@@ -127,7 +128,7 @@ pub fn to_duckdb(input_path: &Path, output: Option<&Path>, force: bool, filter: 
 mod tests {
     use super::*;
     use crate::commands::to_csv::to_csv;
-    use crate::{OrderMode, NullMode, TableFilter};
+    use crate::{NullMode, OrderMode, TableFilter};
     use rusqlite::Connection as SqliteConnection;
     use tempfile::tempdir;
 
@@ -148,7 +149,17 @@ mod tests {
         }
 
         // Convert to CSV
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            false,
+            None,
+            false,
+            None,
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
 
         // Convert to DuckDB
         let duckdb_path = to_duckdb(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
@@ -158,11 +169,8 @@ mod tests {
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
         assert_eq!(count, 2);
 
-        let name: String = conn.query_row(
-            "SELECT name FROM users WHERE id = 1",
-            [],
-            |r| r.get(0),
-        )?;
+        let name: String =
+            conn.query_row("SELECT name FROM users WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(name, "Alice");
 
         Ok(())
@@ -192,7 +200,17 @@ mod tests {
         }
 
         // SQLite -> CSV
-        let csvdb = to_csv(&original_db, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(
+            &original_db,
+            OrderMode::Pk,
+            NullMode::Marker,
+            false,
+            None,
+            false,
+            None,
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
 
         // CSV -> DuckDB
         let duckdb_path = to_duckdb(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
@@ -231,7 +249,12 @@ mod tests {
         std::fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
         let db_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
-        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("foo.duckdb"));
+        assert!(db_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("foo.duckdb"));
         Ok(())
     }
 
@@ -248,7 +271,12 @@ mod tests {
 
         let db_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         // Input "bar" (no .csvdb suffix) -> output "bar.duckdb"
-        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("bar.duckdb"));
+        assert!(db_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("bar.duckdb"));
         Ok(())
     }
 
@@ -306,7 +334,12 @@ mod tests {
 
         // SQLite input (non-csvdb) goes through to_csv internally
         let output = dir.path().join("out.duckdb");
-        let duckdb_path = to_duckdb(&db_path, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+        let duckdb_path = to_duckdb(
+            &db_path,
+            Some(&output),
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
 
         let conn = duckdb::Connection::open(&duckdb_path)?;
         let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
@@ -327,7 +360,12 @@ mod tests {
         std::fs::write(csvdb_dir.join("t1.csv"), "id\n1\n")?;
         std::fs::write(csvdb_dir.join("t2.csv"), "id\n1\n")?;
 
-        let duckdb_path = to_duckdb(&csvdb_dir, None, true, &TableFilter::new(vec!["t1".to_string()], vec![]))?;
+        let duckdb_path = to_duckdb(
+            &csvdb_dir,
+            None,
+            true,
+            &TableFilter::new(vec!["t1".to_string()], vec![]),
+        )?;
 
         let conn = duckdb::Connection::open(&duckdb_path)?;
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM t1", [], |r| r.get(0))?;
@@ -354,31 +392,37 @@ mod tests {
             conn.execute("INSERT INTO t VALUES (2, 'Bob', 42)", [])?;
         }
 
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            false,
+            None,
+            false,
+            None,
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
         let duckdb_path = to_duckdb(&csvdb, None, true, &TableFilter::new(vec![], vec![]))?;
 
         let conn = duckdb::Connection::open(&duckdb_path)?;
 
         // Row 1: NULLs preserved
-        let name: Option<String> = conn.query_row(
-            "SELECT name FROM t WHERE id = 1", [], |r| r.get(0),
-        )?;
+        let name: Option<String> =
+            conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(name, None);
 
-        let score: Option<i64> = conn.query_row(
-            "SELECT score FROM t WHERE id = 1", [], |r| r.get(0),
-        )?;
+        let score: Option<i64> =
+            conn.query_row("SELECT score FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(score, None);
 
         // Row 2: values preserved
-        let name: Option<String> = conn.query_row(
-            "SELECT name FROM t WHERE id = 2", [], |r| r.get(0),
-        )?;
+        let name: Option<String> =
+            conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
         assert_eq!(name, Some("Bob".to_string()));
 
-        let score: Option<i64> = conn.query_row(
-            "SELECT score FROM t WHERE id = 2", [], |r| r.get(0),
-        )?;
+        let score: Option<i64> =
+            conn.query_row("SELECT score FROM t WHERE id = 2", [], |r| r.get(0))?;
         assert_eq!(score, Some(42));
 
         Ok(())

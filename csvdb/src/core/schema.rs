@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use duckdb::Connection as DuckDbConnection;
 use regex::Regex;
 use rusqlite::Connection;
@@ -60,7 +60,11 @@ fn sort_views_by_dependency(views: Vec<View>) -> Result<Vec<View>> {
     }
 
     let view_names: HashSet<&str> = views.iter().map(|v| v.name.as_str()).collect();
-    let name_to_idx: HashMap<&str, usize> = views.iter().enumerate().map(|(i, v)| (v.name.as_str(), i)).collect();
+    let name_to_idx: HashMap<&str, usize> = views
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (v.name.as_str(), i))
+        .collect();
 
     // Build adjacency list: deps[i] = set of indices that view i depends on
     let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); views.len()]; // dependents[dep] = views that depend on dep
@@ -222,7 +226,7 @@ impl Schema {
         let mut stmt = conn.prepare(
             "SELECT name, sql FROM sqlite_master
              WHERE type='table' AND name NOT LIKE 'sqlite_%'
-             ORDER BY name"
+             ORDER BY name",
         )?;
 
         let table_rows: Vec<(String, String)> = stmt
@@ -253,7 +257,7 @@ impl Schema {
         let mut view_stmt = conn.prepare(
             "SELECT name, sql FROM sqlite_master
              WHERE type='view' AND name NOT LIKE 'sqlite_%'
-             ORDER BY name"
+             ORDER BY name",
         )?;
 
         let views: Vec<View> = view_stmt
@@ -296,7 +300,7 @@ impl Schema {
         let mut idx_stmt = conn.prepare(
             "SELECT name, sql FROM sqlite_master
              WHERE type='index' AND tbl_name=? AND sql IS NOT NULL
-             ORDER BY name"
+             ORDER BY name",
         )?;
 
         let indexes: Vec<Index> = idx_stmt
@@ -335,7 +339,7 @@ impl Schema {
         let mut stmt = conn.prepare(
             "SELECT table_name FROM information_schema.tables
              WHERE table_schema = 'main' AND table_type = 'BASE TABLE'
-             ORDER BY table_name"
+             ORDER BY table_name",
         )?;
 
         let table_names: Vec<String> = stmt
@@ -366,7 +370,7 @@ impl Schema {
         let mut view_stmt = conn.prepare(
             "SELECT view_name, sql FROM duckdb_views()
              WHERE schema_name = 'main'
-             ORDER BY view_name"
+             ORDER BY view_name",
         )?;
 
         let views: Vec<View> = view_stmt
@@ -379,9 +383,11 @@ impl Schema {
             .filter_map(|r| r.ok())
             .filter(|v| !v.sql.is_empty())
             // Filter out DuckDB system views
-            .filter(|v| !v.name.starts_with("duckdb_")
-                     && !v.name.starts_with("pragma_")
-                     && !v.name.starts_with("sqlite_"))
+            .filter(|v| {
+                !v.name.starts_with("duckdb_")
+                    && !v.name.starts_with("pragma_")
+                    && !v.name.starts_with("sqlite_")
+            })
             .collect();
 
         Ok(Schema { tables, views })
@@ -393,7 +399,7 @@ impl Schema {
             "SELECT column_name, data_type, is_nullable, column_default
              FROM information_schema.columns
              WHERE table_schema = 'main' AND table_name = ?
-             ORDER BY ordinal_position"
+             ORDER BY ordinal_position",
         )?;
 
         let columns: Vec<Column> = col_stmt
@@ -418,7 +424,7 @@ impl Schema {
              WHERE tc.table_schema = 'main'
                AND tc.table_name = ?
                AND tc.constraint_type = 'PRIMARY KEY'
-             ORDER BY kcu.ordinal_position"
+             ORDER BY kcu.ordinal_position",
         )?;
 
         let pk_columns: Vec<String> = pk_stmt
@@ -453,7 +459,11 @@ impl Schema {
     }
 
     /// Generate a CREATE TABLE statement from column metadata.
-    fn generate_create_table_sql(table_name: &str, columns: &[Column], pk_columns: &[String]) -> String {
+    fn generate_create_table_sql(
+        table_name: &str,
+        columns: &[Column],
+        pk_columns: &[String],
+    ) -> String {
         let mut sql = format!("CREATE TABLE \"{table_name}\" (\n");
 
         for (i, col) in columns.iter().enumerate() {
@@ -621,7 +631,8 @@ mod tests {
     #[test]
     fn test_missing_pk_error_with_pk_mode() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute("CREATE TABLE no_pk (name TEXT, value INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE no_pk (name TEXT, value INTEGER)", [])
+            .unwrap();
 
         let result = Schema::from_sqlite(&conn);
         assert!(result.is_err());
@@ -633,7 +644,8 @@ mod tests {
     #[test]
     fn test_missing_pk_allowed_with_all_columns_mode() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute("CREATE TABLE no_pk (name TEXT, value INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE no_pk (name TEXT, value INTEGER)", [])
+            .unwrap();
 
         let result = Schema::from_sqlite_with_order(&conn, OrderMode::AllColumns);
         assert!(result.is_ok());
@@ -642,7 +654,8 @@ mod tests {
     #[test]
     fn test_missing_pk_allowed_with_synthetic_key_mode() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute("CREATE TABLE no_pk (name TEXT, value INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE no_pk (name TEXT, value INTEGER)", [])
+            .unwrap();
 
         let result = Schema::from_sqlite_with_order(&conn, OrderMode::AddSyntheticKey);
         assert!(result.is_ok());
@@ -661,7 +674,8 @@ mod tests {
         assert_eq!(cols, vec!["email"]);
 
         // Multi-column index
-        let (unique, cols) = parse_index_sql("CREATE INDEX idx_multi ON orders (user_id, product_id)");
+        let (unique, cols) =
+            parse_index_sql("CREATE INDEX idx_multi ON orders (user_id, product_id)");
         assert!(!unique);
         assert_eq!(cols, vec!["user_id", "product_id"]);
 

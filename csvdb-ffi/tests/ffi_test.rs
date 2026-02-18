@@ -13,7 +13,9 @@ fn c(s: &str) -> CString {
 
 unsafe fn read_and_free(ptr: *mut c_char) -> String {
     assert!(!ptr.is_null(), "got NULL, error: {}", last_error_string());
-    let s = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    let s = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
     unsafe { csvdb_free_string(ptr) };
     s
 }
@@ -23,7 +25,9 @@ fn last_error_string() -> String {
     if ptr.is_null() {
         "no error".to_string()
     } else {
-        unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -39,7 +43,8 @@ fn make_test_csvdb(dir: &std::path::Path) -> std::path::PathBuf {
     fs::write(
         csvdb_dir.join("users.csv"),
         "id,name,score\n1,Alice,95\n2,Bob,87\n3,Charlie,92\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     csvdb_dir
 }
@@ -51,10 +56,14 @@ fn make_test_sqlite(dir: &std::path::Path) -> std::path::PathBuf {
     conn.execute(
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score INTEGER)",
         [],
-    ).unwrap();
-    conn.execute("INSERT INTO users VALUES (1, 'Alice', 95)", []).unwrap();
-    conn.execute("INSERT INTO users VALUES (2, 'Bob', 87)", []).unwrap();
-    conn.execute("INSERT INTO users VALUES (3, 'Charlie', 92)", []).unwrap();
+    )
+    .unwrap();
+    conn.execute("INSERT INTO users VALUES (1, 'Alice', 95)", [])
+        .unwrap();
+    conn.execute("INSERT INTO users VALUES (2, 'Bob', 87)", [])
+        .unwrap();
+    conn.execute("INSERT INTO users VALUES (3, 'Charlie', 92)", [])
+        .unwrap();
     db_path
 }
 
@@ -127,7 +136,15 @@ fn test_to_sqlite() {
     let csvdb_dir = make_test_csvdb(dir.path());
     let input = c(csvdb_dir.to_str().unwrap());
 
-    let path = unsafe { read_and_free(csvdb_to_sqlite(input.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null())) };
+    let path = unsafe {
+        read_and_free(csvdb_to_sqlite(
+            input.as_ptr(),
+            ptr::null(),
+            1,
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
     assert!(path.ends_with(".sqlite"), "unexpected path: {path}");
     assert!(std::path::Path::new(&path).exists());
 }
@@ -138,7 +155,15 @@ fn test_to_duckdb() {
     let csvdb_dir = make_test_csvdb(dir.path());
     let input = c(csvdb_dir.to_str().unwrap());
 
-    let path = unsafe { read_and_free(csvdb_to_duckdb(input.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null())) };
+    let path = unsafe {
+        read_and_free(csvdb_to_duckdb(
+            input.as_ptr(),
+            ptr::null(),
+            1,
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
     assert!(path.ends_with(".duckdb"), "unexpected path: {path}");
     assert!(std::path::Path::new(&path).exists());
 }
@@ -237,12 +262,20 @@ fn test_diff_different() {
     // Create two different .csvdb dirs
     let dir1 = dir.path().join("a.csvdb");
     fs::create_dir(&dir1).unwrap();
-    fs::write(dir1.join("schema.sql"), "CREATE TABLE \"t\" (\"id\" INTEGER PRIMARY KEY, \"v\" TEXT);\n").unwrap();
+    fs::write(
+        dir1.join("schema.sql"),
+        "CREATE TABLE \"t\" (\"id\" INTEGER PRIMARY KEY, \"v\" TEXT);\n",
+    )
+    .unwrap();
     fs::write(dir1.join("t.csv"), "id,v\n1,hello\n").unwrap();
 
     let dir2 = dir.path().join("b.csvdb");
     fs::create_dir(&dir2).unwrap();
-    fs::write(dir2.join("schema.sql"), "CREATE TABLE \"t\" (\"id\" INTEGER PRIMARY KEY, \"v\" TEXT);\n").unwrap();
+    fs::write(
+        dir2.join("schema.sql"),
+        "CREATE TABLE \"t\" (\"id\" INTEGER PRIMARY KEY, \"v\" TEXT);\n",
+    )
+    .unwrap();
     fs::write(dir2.join("t.csv"), "id,v\n1,world\n").unwrap();
 
     let left = c(dir1.to_str().unwrap());
@@ -260,10 +293,21 @@ fn test_init() {
     fs::write(
         csv_dir.join("products.csv"),
         "id,name,price\n1,Widget,9.99\n2,Gadget,19.99\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let source = c(csv_dir.to_str().unwrap());
-    let path = unsafe { read_and_free(csvdb_init(source.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null(), 1, 1)) };
+    let path = unsafe {
+        read_and_free(csvdb_init(
+            source.as_ptr(),
+            ptr::null(),
+            1,
+            ptr::null(),
+            ptr::null(),
+            1,
+            1,
+        ))
+    };
     assert!(path.ends_with(".csvdb"), "unexpected path: {path}");
     assert!(std::path::Path::new(&path).join("schema.sql").exists());
 }
@@ -287,9 +331,18 @@ fn test_to_csvdb_incremental() {
             0,           // compress
         ))
     };
-    assert!(json.contains("\"path\""), "expected JSON with path, got: {json}");
-    assert!(json.contains("\"added\""), "expected JSON with added, got: {json}");
-    assert!(json.contains("\"unchanged\""), "expected JSON with unchanged, got: {json}");
+    assert!(
+        json.contains("\"path\""),
+        "expected JSON with path, got: {json}"
+    );
+    assert!(
+        json.contains("\"added\""),
+        "expected JSON with added, got: {json}"
+    );
+    assert!(
+        json.contains("\"unchanged\""),
+        "expected JSON with unchanged, got: {json}"
+    );
 }
 
 #[test]
@@ -314,7 +367,10 @@ fn test_to_csvdb_compress() {
             1,           // compress
         ))
     };
-    assert!(std::path::Path::new(&path).join("users.csv.gz").exists(), "expected compressed csv.gz");
+    assert!(
+        std::path::Path::new(&path).join("users.csv.gz").exists(),
+        "expected compressed csv.gz"
+    );
 }
 
 #[test]
@@ -324,12 +380,32 @@ fn test_checksum_consistency() {
     let csvdb_dir = make_test_csvdb(dir.path());
 
     let csvdb_input = c(csvdb_dir.to_str().unwrap());
-    let csvdb_hash = unsafe { read_and_free(csvdb_checksum(csvdb_input.as_ptr(), ptr::null(), ptr::null())) };
+    let csvdb_hash = unsafe {
+        read_and_free(csvdb_checksum(
+            csvdb_input.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
 
     // Convert to SQLite, checksum should match
-    let sqlite_path = unsafe { read_and_free(csvdb_to_sqlite(csvdb_input.as_ptr(), ptr::null(), 1, ptr::null(), ptr::null())) };
+    let sqlite_path = unsafe {
+        read_and_free(csvdb_to_sqlite(
+            csvdb_input.as_ptr(),
+            ptr::null(),
+            1,
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
     let sqlite_input = c(&sqlite_path);
-    let sqlite_hash = unsafe { read_and_free(csvdb_checksum(sqlite_input.as_ptr(), ptr::null(), ptr::null())) };
+    let sqlite_hash = unsafe {
+        read_and_free(csvdb_checksum(
+            sqlite_input.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
 
     assert_eq!(csvdb_hash, sqlite_hash, "csvdb vs sqlite checksum mismatch");
 }

@@ -40,8 +40,8 @@ fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool
 
     let input_format = InputFormat::from_path(path)?;
 
-    let conn = Connection::open_in_memory()
-        .context("Failed to create in-memory DuckDB connection")?;
+    let conn =
+        Connection::open_in_memory().context("Failed to create in-memory DuckDB connection")?;
 
     load_data(&conn, path, input_format)?;
 
@@ -50,16 +50,18 @@ fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool
         .prepare(trimmed)
         .with_context(|| format!("Failed to prepare query: {trimmed}"))?;
 
-    let arrow = stmt
-        .query_arrow([])
-        .context("Failed to execute query")?;
+    let arrow = stmt.query_arrow([]).context("Failed to execute query")?;
 
     let schema = arrow.get_schema();
     let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
     let column_count = column_names.len();
 
     // Detect numeric columns from Arrow schema
-    let numeric_cols: Vec<bool> = schema.fields().iter().map(|f| is_numeric_type(f.data_type())).collect();
+    let numeric_cols: Vec<bool> = schema
+        .fields()
+        .iter()
+        .map(|f| is_numeric_type(f.data_type()))
+        .collect();
 
     // Collect all record batches
     let batches: Vec<arrow::record_batch::RecordBatch> = arrow.collect();
@@ -88,7 +90,14 @@ fn sql_query_internal(path: &Path, query: &str) -> Result<(QueryResult, Vec<bool
         }
     }
 
-    Ok((QueryResult { column_names, rows, null_flags }, numeric_cols))
+    Ok((
+        QueryResult {
+            column_names,
+            rows,
+            null_flags,
+        },
+        numeric_cols,
+    ))
 }
 
 /// Execute a read-only SQL query and return Arrow RecordBatches directly.
@@ -102,8 +111,8 @@ pub fn sql_query_arrow(path: &Path, query: &str) -> Result<Vec<arrow::record_bat
 
     let input_format = InputFormat::from_path(path)?;
 
-    let conn = Connection::open_in_memory()
-        .context("Failed to create in-memory DuckDB connection")?;
+    let conn =
+        Connection::open_in_memory().context("Failed to create in-memory DuckDB connection")?;
 
     load_data(&conn, path, input_format)?;
 
@@ -111,9 +120,7 @@ pub fn sql_query_arrow(path: &Path, query: &str) -> Result<Vec<arrow::record_bat
         .prepare(trimmed)
         .with_context(|| format!("Failed to prepare query: {trimmed}"))?;
 
-    let arrow = stmt
-        .query_arrow([])
-        .context("Failed to execute query")?;
+    let arrow = stmt.query_arrow([]).context("Failed to execute query")?;
 
     let batches: Vec<arrow::record_batch::RecordBatch> = arrow.collect();
     Ok(batches)
@@ -133,7 +140,12 @@ pub fn sql(path: &Path, query: &str, format: Option<OutputFormat>) -> Result<()>
 
     match format {
         OutputFormat::Csv => print_csv(&result.column_names, &result.rows)?,
-        OutputFormat::Table => print_table(&result.column_names, &result.rows, &result.null_flags, &numeric_cols)?,
+        OutputFormat::Table => print_table(
+            &result.column_names,
+            &result.rows,
+            &result.null_flags,
+            &numeric_cols,
+        )?,
     }
 
     Ok(())
@@ -167,10 +179,7 @@ fn load_duckdb(conn: &Connection, path: &Path) -> Result<()> {
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
     let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
-    conn.execute(
-        &format!("ATTACH '{path_str}' AS src (READ_ONLY)"),
-        [],
-    )?;
+    conn.execute(&format!("ATTACH '{path_str}' AS src (READ_ONLY)"), [])?;
     conn.execute("USE src", [])?;
     Ok(())
 }
@@ -196,9 +205,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<()> {
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             conn.execute(
-                &format!(
-                    "COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"
-                ),
+                &format!("COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"),
                 [],
             )?;
         }
@@ -229,9 +236,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<()> {
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             conn.execute(
-                &format!(
-                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
-                ),
+                &format!("INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"),
                 [],
             )?;
         }
@@ -241,19 +246,14 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<()> {
 }
 
 fn load_single_parquet(conn: &Connection, path: &Path) -> Result<()> {
-    let table_name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("table");
+    let table_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("table");
 
     let abs_path = path.canonicalize()?;
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
     let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
     conn.execute(
-        &format!(
-            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
-        ),
+        &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"),
         [],
     )?;
 
@@ -422,7 +422,11 @@ mod tests {
         }
 
         // Should succeed without error
-        sql(&db_path, "SELECT count(*) FROM users", Some(OutputFormat::Csv))?;
+        sql(
+            &db_path,
+            "SELECT count(*) FROM users",
+            Some(OutputFormat::Csv),
+        )?;
         Ok(())
     }
 
@@ -444,10 +448,7 @@ mod tests {
 
         {
             let conn = SqliteConnection::open(&db_path)?;
-            conn.execute(
-                "CREATE TABLE nums (n INTEGER PRIMARY KEY)",
-                [],
-            )?;
+            conn.execute("CREATE TABLE nums (n INTEGER PRIMARY KEY)", [])?;
             conn.execute("INSERT INTO nums VALUES (1)", [])?;
         }
 
@@ -494,10 +495,7 @@ mod tests {
 
     #[test]
     fn test_sql_query_arrow_rejects_non_select() {
-        let result = sql_query_arrow(
-            Path::new("nonexistent.sqlite"),
-            "DROP TABLE users",
-        );
+        let result = sql_query_arrow(Path::new("nonexistent.sqlite"), "DROP TABLE users");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Only SELECT"));
     }
@@ -509,7 +507,10 @@ mod tests {
 
         {
             let conn = SqliteConnection::open(&db_path)?;
-            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)", [])?;
+            conn.execute(
+                "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)",
+                [],
+            )?;
             conn.execute("INSERT INTO t VALUES (1, 'Alice', 95)", [])?;
             conn.execute("INSERT INTO t VALUES (2, NULL, 80)", [])?;
         }
@@ -532,7 +533,10 @@ mod tests {
 
         {
             let conn = duckdb::Connection::open(&db_path)?;
-            conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR)", [])?;
+            conn.execute(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR)",
+                [],
+            )?;
             conn.execute("INSERT INTO items VALUES (1, 'Apple')", [])?;
             conn.execute("INSERT INTO items VALUES (2, 'Banana')", [])?;
         }
@@ -553,7 +557,10 @@ mod tests {
             csvdb_dir.join("schema.sql"),
             "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n",
         )?;
-        std::fs::write(csvdb_dir.join("t.csv"), "\"id\",\"val\"\n\"1\",\"hello\"\n\"2\",\"world\"\n")?;
+        std::fs::write(
+            csvdb_dir.join("t.csv"),
+            "\"id\",\"val\"\n\"1\",\"hello\"\n\"2\",\"world\"\n",
+        )?;
 
         let result = sql_query(&csvdb_dir, "SELECT * FROM t ORDER BY id")?;
         assert_eq!(result.rows.len(), 2);
@@ -577,7 +584,9 @@ mod tests {
             &db_path,
             crate::OrderMode::Pk,
             crate::NullMode::Marker,
-            None, None, true,
+            None,
+            None,
+            true,
             &crate::TableFilter::new(vec![], vec![]),
         )?;
 
@@ -603,7 +612,9 @@ mod tests {
             &db_path,
             crate::OrderMode::Pk,
             crate::NullMode::Marker,
-            None, None, true,
+            None,
+            None,
+            true,
             &crate::TableFilter::new(vec![], vec![]),
         )?;
 
