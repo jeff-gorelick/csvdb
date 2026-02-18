@@ -77,8 +77,9 @@ cargo install csvdb
 # Python library (import csvdb)
 pip install csvdb-py
 
-# Standalone binary (via pip/pipx/uvx)
-uvx csvdb-cli
+# Standalone binary (via uv/pipx)
+uv tool install csvdb-cli   # then: csvdb ...
+pipx install csvdb-cli      # then: csvdb ...
 ```
 
 ## Quick Start
