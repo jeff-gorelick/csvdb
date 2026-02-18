@@ -2,13 +2,13 @@ use anyhow::{Context, Result};
 use duckdb::Connection as DuckDbConnection;
 use rusqlite::Connection;
 use std::cmp::Ordering;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 use super::schema::TableSchema;
-use crate::{OrderMode, NullMode, NULL_MARKER};
+use crate::{NullMode, OrderMode, NULL_MARKER};
 
 /// Name of the synthetic rowid column added in AddSyntheticKey mode.
 pub const SYNTHETIC_KEY_COLUMN: &str = "__csvdb_rowid";
@@ -71,15 +71,27 @@ impl Table {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
                 let order = if schema.pk_columns.is_empty() {
                     // Fallback to all columns if no PK (shouldn't happen in Pk mode)
-                    cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+                    cols.iter()
+                        .map(|c| format!("\"{c}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 } else {
-                    schema.pk_columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+                    schema
+                        .pk_columns
+                        .iter()
+                        .map(|c| format!("\"{c}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 };
                 (cols, order, false)
             }
             OrderMode::AllColumns => {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-                let order = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+                let order = cols
+                    .iter()
+                    .map(|c| format!("\"{c}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 (cols, order, false)
             }
             OrderMode::AddSyntheticKey => {
@@ -96,23 +108,23 @@ impl Table {
             parts.extend(schema.columns.iter().map(|c| format!("\"{}\"", c.name)));
             parts.join(", ")
         } else {
-            columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+            columns
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
 
         let query = format!(
             "SELECT {} FROM \"{}\" ORDER BY {}",
-            select_cols,
-            schema.name,
-            order_by
+            select_cols, schema.name, order_by
         );
 
         let mut stmt = conn.prepare(&query)?;
 
         // Determine PK columns for the result
         let (pk_columns, pk_indices) = match order_mode {
-            OrderMode::Pk => {
-                (schema.pk_columns.clone(), schema.pk_indices())
-            }
+            OrderMode::Pk => (schema.pk_columns.clone(), schema.pk_indices()),
             OrderMode::AllColumns => {
                 // Use all columns as a pseudo-PK for ordering
                 let all_indices: Vec<usize> = (0..columns.len()).collect();
@@ -133,10 +145,8 @@ impl Table {
                     })
                     .collect::<Result<_, rusqlite::Error>>()?;
 
-                let pk_values: Vec<String> = pk_indices
-                    .iter()
-                    .map(|&i| values[i].clone())
-                    .collect();
+                let pk_values: Vec<String> =
+                    pk_indices.iter().map(|&i| values[i].clone()).collect();
 
                 Ok(Row { pk_values, values })
             })?
@@ -158,8 +168,7 @@ impl Table {
                     "Table '{}' has {} duplicate row(s). \
                      Diffs and merges may be ambiguous. \
                      Consider using --order=add-synthetic-key for event/log tables.",
-                    schema.name,
-                    duplicate_count
+                    schema.name, duplicate_count
                 ));
             }
         }
@@ -184,13 +193,15 @@ impl Table {
         null_mode: NullMode,
     ) -> Result<TableReadResult> {
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-        let select_cols = columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let select_cols = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let query = format!(
             "SELECT {} FROM \"{}\" ORDER BY {}",
-            select_cols,
-            schema.name,
-            order_by
+            select_cols, schema.name, order_by
         );
 
         let mut stmt = conn.prepare(&query)?;
@@ -205,7 +216,10 @@ impl Table {
                     .collect::<Result<_, rusqlite::Error>>()?;
 
                 // Empty pk_values so CSV writer won't re-sort
-                Ok(Row { pk_values: vec![], values })
+                Ok(Row {
+                    pk_values: vec![],
+                    values,
+                })
             })?
             .collect::<Result<_, _>>()
             .context("Failed to read rows")?;
@@ -217,7 +231,10 @@ impl Table {
             rows,
         };
 
-        Ok(TableReadResult { table, warnings: vec![] })
+        Ok(TableReadResult {
+            table,
+            warnings: vec![],
+        })
     }
 
     /// Read a table from DuckDB database with configurable ordering.
@@ -234,15 +251,27 @@ impl Table {
             OrderMode::Pk => {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
                 let order = if schema.pk_columns.is_empty() {
-                    cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+                    cols.iter()
+                        .map(|c| format!("\"{c}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 } else {
-                    schema.pk_columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+                    schema
+                        .pk_columns
+                        .iter()
+                        .map(|c| format!("\"{c}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 };
                 (cols, order, false)
             }
             OrderMode::AllColumns => {
                 let cols: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-                let order = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+                let order = cols
+                    .iter()
+                    .map(|c| format!("\"{c}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 (cols, order, false)
             }
             OrderMode::AddSyntheticKey => {
@@ -259,30 +288,28 @@ impl Table {
             parts.extend(schema.columns.iter().map(|c| format!("\"{}\"", c.name)));
             parts.join(", ")
         } else {
-            columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+            columns
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
 
         let query = format!(
             "SELECT {} FROM \"{}\" ORDER BY {}",
-            select_cols,
-            schema.name,
-            order_by
+            select_cols, schema.name, order_by
         );
 
         let mut stmt = conn.prepare(&query)?;
 
         // Determine PK columns for the result
         let (pk_columns, pk_indices) = match order_mode {
-            OrderMode::Pk => {
-                (schema.pk_columns.clone(), schema.pk_indices())
-            }
+            OrderMode::Pk => (schema.pk_columns.clone(), schema.pk_indices()),
             OrderMode::AllColumns => {
                 let all_indices: Vec<usize> = (0..columns.len()).collect();
                 (columns.clone(), all_indices)
             }
-            OrderMode::AddSyntheticKey => {
-                (vec![SYNTHETIC_KEY_COLUMN.to_string()], vec![0])
-            }
+            OrderMode::AddSyntheticKey => (vec![SYNTHETIC_KEY_COLUMN.to_string()], vec![0]),
         };
 
         let rows: Vec<Row> = stmt
@@ -294,10 +321,8 @@ impl Table {
                     })
                     .collect::<Result<_, duckdb::Error>>()?;
 
-                let pk_values: Vec<String> = pk_indices
-                    .iter()
-                    .map(|&i| values[i].clone())
-                    .collect();
+                let pk_values: Vec<String> =
+                    pk_indices.iter().map(|&i| values[i].clone()).collect();
 
                 Ok(Row { pk_values, values })
             })?
@@ -319,8 +344,7 @@ impl Table {
                     "Table '{}' has {} duplicate row(s). \
                      Diffs and merges may be ambiguous. \
                      Consider using --order=add-synthetic-key for event/log tables.",
-                    schema.name,
-                    duplicate_count
+                    schema.name, duplicate_count
                 ));
             }
         }
@@ -345,13 +369,15 @@ impl Table {
         null_mode: NullMode,
     ) -> Result<TableReadResult> {
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-        let select_cols = columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let select_cols = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let query = format!(
             "SELECT {} FROM \"{}\" ORDER BY {}",
-            select_cols,
-            schema.name,
-            order_by
+            select_cols, schema.name, order_by
         );
 
         let mut stmt = conn.prepare(&query)?;
@@ -366,7 +392,10 @@ impl Table {
                     .collect::<Result<_, duckdb::Error>>()?;
 
                 // Empty pk_values so CSV writer won't re-sort
-                Ok(Row { pk_values: vec![], values })
+                Ok(Row {
+                    pk_values: vec![],
+                    values,
+                })
             })?
             .collect::<Result<_, _>>()
             .context("Failed to read rows")?;
@@ -378,7 +407,10 @@ impl Table {
             rows,
         };
 
-        Ok(TableReadResult { table, warnings: vec![] })
+        Ok(TableReadResult {
+            table,
+            warnings: vec![],
+        })
     }
 
     /// Build a map from primary key to row for efficient lookups.
@@ -392,7 +424,8 @@ impl Table {
             return Ok(());
         }
 
-        let columns_str = self.columns
+        let columns_str = self
+            .columns
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
@@ -405,7 +438,8 @@ impl Table {
 
         for chunk in self.rows.chunks(max_rows_per_batch) {
             // Build multi-row INSERT: INSERT INTO t (cols) VALUES (...), (...), (...)
-            let values_placeholders = vec![single_row_placeholders.as_str(); chunk.len()].join(", ");
+            let values_placeholders =
+                vec![single_row_placeholders.as_str(); chunk.len()].join(", ");
             let sql = format!(
                 "INSERT INTO \"{}\" ({}) VALUES {}",
                 self.name, columns_str, values_placeholders
@@ -416,13 +450,15 @@ impl Table {
             // Flatten all values into a single params vector, converting \N to NULL
             let all_values: Vec<Option<&str>> = chunk
                 .iter()
-                .flat_map(|row| row.values.iter().map(|s| {
-                    if s == NULL_MARKER {
-                        None
-                    } else {
-                        Some(s.as_str())
-                    }
-                }))
+                .flat_map(|row| {
+                    row.values.iter().map(|s| {
+                        if s == NULL_MARKER {
+                            None
+                        } else {
+                            Some(s.as_str())
+                        }
+                    })
+                })
                 .collect();
 
             let params: Vec<&dyn rusqlite::ToSql> = all_values
@@ -457,7 +493,8 @@ impl Table {
         let type_map: HashMap<String, String> = col_types.into_iter().collect();
 
         let placeholders = vec!["?"; self.columns.len()].join(", ");
-        let columns_str = self.columns
+        let columns_str = self
+            .columns
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
@@ -472,7 +509,8 @@ impl Table {
 
         for row in &self.rows {
             // Convert values based on column types, treating empty strings as NULL for numeric types
-            let converted: Vec<DuckDbValue> = self.columns
+            let converted: Vec<DuckDbValue> = self
+                .columns
                 .iter()
                 .zip(row.values.iter())
                 .map(|(col_name, val)| {
@@ -481,10 +519,8 @@ impl Table {
                 })
                 .collect();
 
-            let params: Vec<&dyn duckdb::ToSql> = converted
-                .iter()
-                .map(|v| v as &dyn duckdb::ToSql)
-                .collect();
+            let params: Vec<&dyn duckdb::ToSql> =
+                converted.iter().map(|v| v as &dyn duckdb::ToSql).collect();
             stmt.execute(params.as_slice())?;
         }
 
@@ -647,7 +683,13 @@ fn duckdb_value_to_string(value: &duckdb::types::Value, null_mode: NullMode) -> 
     use duckdb::types::Value;
     match value {
         Value::Null => null_mode.null_string().to_string(),
-        Value::Boolean(b) => if *b { "1".to_string() } else { "0".to_string() },
+        Value::Boolean(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
         Value::TinyInt(i) => i.to_string(),
         Value::SmallInt(i) => i.to_string(),
         Value::Int(i) => i.to_string(),
@@ -677,10 +719,7 @@ mod tests {
     #[test]
     fn test_table_from_sqlite() -> Result<()> {
         let conn = Connection::open_in_memory()?;
-        conn.execute(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
-            [],
-        )?;
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", [])?;
         conn.execute("INSERT INTO users VALUES (2, 'Bob')", [])?;
         conn.execute("INSERT INTO users VALUES (1, 'Alice')", [])?;
 
@@ -950,7 +989,12 @@ mod tests {
         conn.execute("INSERT INTO t VALUES (1, 'Alice')", [])?;
 
         let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::Pk)?;
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["t"],
+            OrderMode::Pk,
+            NullMode::Marker,
+        )?;
 
         assert_eq!(result.table.rows.len(), 2);
         assert_eq!(result.table.rows[0].pk_values, vec!["1"]);
@@ -967,7 +1011,12 @@ mod tests {
         conn.execute("INSERT INTO events VALUES ('2024-01-01', 'first')", [])?;
 
         let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["events"], OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["events"],
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
 
         assert_eq!(result.table.rows.len(), 2);
         assert_eq!(result.table.rows[0].values[0], "2024-01-01");
@@ -983,7 +1032,12 @@ mod tests {
         conn.execute("INSERT INTO events VALUES ('2024-01-01', 'same')", [])?;
 
         let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AllColumns)?;
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["events"], OrderMode::AllColumns, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["events"],
+            OrderMode::AllColumns,
+            NullMode::Marker,
+        )?;
 
         assert_eq!(result.table.rows.len(), 2);
         assert_eq!(result.warnings.len(), 1);
@@ -998,8 +1052,14 @@ mod tests {
         conn.execute("INSERT INTO events VALUES ('2024-01-02', 'second')", [])?;
         conn.execute("INSERT INTO events VALUES ('2024-01-01', 'first')", [])?;
 
-        let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AddSyntheticKey)?;
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["events"], OrderMode::AddSyntheticKey, NullMode::Marker)?;
+        let schema =
+            crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::AddSyntheticKey)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["events"],
+            OrderMode::AddSyntheticKey,
+            NullMode::Marker,
+        )?;
 
         assert_eq!(result.table.columns[0], SYNTHETIC_KEY_COLUMN);
         assert_eq!(result.table.pk_columns, vec![SYNTHETIC_KEY_COLUMN]);
@@ -1016,7 +1076,12 @@ mod tests {
         conn.execute("INSERT INTO t VALUES (3, 'Bob')", [])?;
 
         let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::Pk)?;
-        let result = Table::from_duckdb_custom_order(&conn, &schema.tables["t"], "name ASC", NullMode::Marker)?;
+        let result = Table::from_duckdb_custom_order(
+            &conn,
+            &schema.tables["t"],
+            "name ASC",
+            NullMode::Marker,
+        )?;
 
         assert_eq!(result.table.rows[0].values[1], "Alice");
         assert_eq!(result.table.rows[1].values[1], "Bob");
@@ -1035,15 +1100,30 @@ mod tests {
         let schema = crate::core::Schema::from_duckdb_with_order(&conn, OrderMode::Pk)?;
 
         // Marker mode
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Marker)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["t"],
+            OrderMode::Pk,
+            NullMode::Marker,
+        )?;
         assert_eq!(result.table.rows[0].values[1], "\\N");
 
         // Empty mode
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Empty)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["t"],
+            OrderMode::Pk,
+            NullMode::Empty,
+        )?;
         assert_eq!(result.table.rows[0].values[1], "");
 
         // Literal mode
-        let result = Table::from_duckdb_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Literal)?;
+        let result = Table::from_duckdb_with_order(
+            &conn,
+            &schema.tables["t"],
+            OrderMode::Pk,
+            NullMode::Literal,
+        )?;
         assert_eq!(result.table.rows[0].values[1], "NULL");
 
         Ok(())
@@ -1052,7 +1132,10 @@ mod tests {
     #[test]
     fn test_write_to_duckdb() -> Result<()> {
         let conn = DuckDbConnection::open_in_memory()?;
-        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR, score DOUBLE)", [])?;
+        conn.execute(
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR, score DOUBLE)",
+            [],
+        )?;
 
         let table = Table {
             name: "t".to_string(),
@@ -1072,17 +1155,21 @@ mod tests {
 
         table.write_to_duckdb(&conn)?;
 
-        let name: Option<String> = conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
+        let name: Option<String> =
+            conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(name, Some("Alice".to_string()));
 
-        let score: Option<f64> = conn.query_row("SELECT score FROM t WHERE id = 1", [], |r| r.get(0))?;
+        let score: Option<f64> =
+            conn.query_row("SELECT score FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert!((score.unwrap() - 95.5).abs() < 0.01);
 
         // Row 2: \N should be NULL
-        let name: Option<String> = conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
+        let name: Option<String> =
+            conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
         assert_eq!(name, None);
 
-        let score: Option<f64> = conn.query_row("SELECT score FROM t WHERE id = 2", [], |r| r.get(0))?;
+        let score: Option<f64> =
+            conn.query_row("SELECT score FROM t WHERE id = 2", [], |r| r.get(0))?;
         assert_eq!(score, None);
 
         Ok(())
@@ -1130,60 +1217,147 @@ mod tests {
     #[test]
     fn test_convert_for_duckdb() {
         // NULL marker
-        assert!(matches!(convert_for_duckdb("\\N", "TEXT"), DuckDbValue::Null));
-        assert!(matches!(convert_for_duckdb("\\N", "INTEGER"), DuckDbValue::Null));
+        assert!(matches!(
+            convert_for_duckdb("\\N", "TEXT"),
+            DuckDbValue::Null
+        ));
+        assert!(matches!(
+            convert_for_duckdb("\\N", "INTEGER"),
+            DuckDbValue::Null
+        ));
 
         // Integer values
-        assert!(matches!(convert_for_duckdb("42", "INTEGER"), DuckDbValue::Integer(42)));
-        assert!(matches!(convert_for_duckdb("-7", "BIGINT"), DuckDbValue::Integer(-7)));
+        assert!(matches!(
+            convert_for_duckdb("42", "INTEGER"),
+            DuckDbValue::Integer(42)
+        ));
+        assert!(matches!(
+            convert_for_duckdb("-7", "BIGINT"),
+            DuckDbValue::Integer(-7)
+        ));
 
         // Float values
-        assert!(matches!(convert_for_duckdb("3.14", "DOUBLE"), DuckDbValue::Real(_)));
-        assert!(matches!(convert_for_duckdb("2.5", "FLOAT"), DuckDbValue::Real(_)));
+        assert!(matches!(
+            convert_for_duckdb("3.14", "DOUBLE"),
+            DuckDbValue::Real(_)
+        ));
+        assert!(matches!(
+            convert_for_duckdb("2.5", "FLOAT"),
+            DuckDbValue::Real(_)
+        ));
 
         // Text values
-        assert!(matches!(convert_for_duckdb("hello", "TEXT"), DuckDbValue::Text(_)));
-        assert!(matches!(convert_for_duckdb("hello", "VARCHAR"), DuckDbValue::Text(_)));
+        assert!(matches!(
+            convert_for_duckdb("hello", "TEXT"),
+            DuckDbValue::Text(_)
+        ));
+        assert!(matches!(
+            convert_for_duckdb("hello", "VARCHAR"),
+            DuckDbValue::Text(_)
+        ));
 
         // Empty string in numeric column → NULL
-        assert!(matches!(convert_for_duckdb("", "INTEGER"), DuckDbValue::Null));
-        assert!(matches!(convert_for_duckdb("", "DOUBLE"), DuckDbValue::Null));
+        assert!(matches!(
+            convert_for_duckdb("", "INTEGER"),
+            DuckDbValue::Null
+        ));
+        assert!(matches!(
+            convert_for_duckdb("", "DOUBLE"),
+            DuckDbValue::Null
+        ));
 
         // Empty string in text column → empty text
-        assert!(matches!(convert_for_duckdb("", "TEXT"), DuckDbValue::Text(_)));
+        assert!(matches!(
+            convert_for_duckdb("", "TEXT"),
+            DuckDbValue::Text(_)
+        ));
 
         // Non-parseable numeric → NULL
-        assert!(matches!(convert_for_duckdb("not_a_number", "DOUBLE"), DuckDbValue::Null));
+        assert!(matches!(
+            convert_for_duckdb("not_a_number", "DOUBLE"),
+            DuckDbValue::Null
+        ));
     }
 
     #[test]
     fn test_duckdb_value_to_string_types() {
         use duckdb::types::Value;
 
-        assert_eq!(duckdb_value_to_string(&Value::Null, NullMode::Marker), "\\N");
+        assert_eq!(
+            duckdb_value_to_string(&Value::Null, NullMode::Marker),
+            "\\N"
+        );
         assert_eq!(duckdb_value_to_string(&Value::Null, NullMode::Empty), "");
-        assert_eq!(duckdb_value_to_string(&Value::Null, NullMode::Literal), "NULL");
+        assert_eq!(
+            duckdb_value_to_string(&Value::Null, NullMode::Literal),
+            "NULL"
+        );
 
-        assert_eq!(duckdb_value_to_string(&Value::Boolean(true), NullMode::Marker), "1");
-        assert_eq!(duckdb_value_to_string(&Value::Boolean(false), NullMode::Marker), "0");
+        assert_eq!(
+            duckdb_value_to_string(&Value::Boolean(true), NullMode::Marker),
+            "1"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::Boolean(false), NullMode::Marker),
+            "0"
+        );
 
-        assert_eq!(duckdb_value_to_string(&Value::TinyInt(1), NullMode::Marker), "1");
-        assert_eq!(duckdb_value_to_string(&Value::SmallInt(100), NullMode::Marker), "100");
-        assert_eq!(duckdb_value_to_string(&Value::Int(42), NullMode::Marker), "42");
-        assert_eq!(duckdb_value_to_string(&Value::BigInt(1000), NullMode::Marker), "1000");
-        assert_eq!(duckdb_value_to_string(&Value::HugeInt(999), NullMode::Marker), "999");
+        assert_eq!(
+            duckdb_value_to_string(&Value::TinyInt(1), NullMode::Marker),
+            "1"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::SmallInt(100), NullMode::Marker),
+            "100"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::Int(42), NullMode::Marker),
+            "42"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::BigInt(1000), NullMode::Marker),
+            "1000"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::HugeInt(999), NullMode::Marker),
+            "999"
+        );
 
-        assert_eq!(duckdb_value_to_string(&Value::UTinyInt(1), NullMode::Marker), "1");
-        assert_eq!(duckdb_value_to_string(&Value::USmallInt(100), NullMode::Marker), "100");
-        assert_eq!(duckdb_value_to_string(&Value::UInt(42), NullMode::Marker), "42");
-        assert_eq!(duckdb_value_to_string(&Value::UBigInt(1000), NullMode::Marker), "1000");
+        assert_eq!(
+            duckdb_value_to_string(&Value::UTinyInt(1), NullMode::Marker),
+            "1"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::USmallInt(100), NullMode::Marker),
+            "100"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::UInt(42), NullMode::Marker),
+            "42"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::UBigInt(1000), NullMode::Marker),
+            "1000"
+        );
 
-        assert_eq!(duckdb_value_to_string(&Value::Float(1.5), NullMode::Marker), "1.5");
-        assert_eq!(duckdb_value_to_string(&Value::Double(2.5), NullMode::Marker), "2.5");
-        assert_eq!(duckdb_value_to_string(&Value::Text("hello".to_string()), NullMode::Marker), "hello");
+        assert_eq!(
+            duckdb_value_to_string(&Value::Float(1.5), NullMode::Marker),
+            "1.5"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::Double(2.5), NullMode::Marker),
+            "2.5"
+        );
+        assert_eq!(
+            duckdb_value_to_string(&Value::Text("hello".to_string()), NullMode::Marker),
+            "hello"
+        );
 
         // Blob
-        assert_eq!(duckdb_value_to_string(&Value::Blob(vec![0xde, 0xad]), NullMode::Marker), "dead");
+        assert_eq!(
+            duckdb_value_to_string(&Value::Blob(vec![0xde, 0xad]), NullMode::Marker),
+            "dead"
+        );
     }
 
     #[test]
@@ -1207,10 +1381,20 @@ mod tests {
 
         let schema = crate::core::Schema::from_sqlite(&conn)?;
 
-        let result = Table::from_sqlite_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Empty)?;
+        let result = Table::from_sqlite_with_order(
+            &conn,
+            &schema.tables["t"],
+            OrderMode::Pk,
+            NullMode::Empty,
+        )?;
         assert_eq!(result.table.rows[0].values[1], "");
 
-        let result = Table::from_sqlite_with_order(&conn, &schema.tables["t"], OrderMode::Pk, NullMode::Literal)?;
+        let result = Table::from_sqlite_with_order(
+            &conn,
+            &schema.tables["t"],
+            OrderMode::Pk,
+            NullMode::Literal,
+        )?;
         assert_eq!(result.table.rows[0].values[1], "NULL");
 
         Ok(())

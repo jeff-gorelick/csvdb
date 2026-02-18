@@ -5,8 +5,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use csvdb::commands::{checksum, diff, hooks, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch};
-use csvdb::{CsvdbConfig, InputFormat, OrderMode, NullMode, TableFilter};
+use csvdb::commands::{
+    checksum, diff, hooks, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch,
+};
+use csvdb::{CsvdbConfig, InputFormat, NullMode, OrderMode, TableFilter};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SqlFormat {
@@ -305,52 +307,164 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { source, output, force, no_pk_detection, no_fk_detection, tables, exclude } => {
+        Commands::Init {
+            source,
+            output,
+            force,
+            no_pk_detection,
+            no_fk_detection,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
-            run_init(&source, output.as_deref(), force, &filter, no_pk_detection, no_fk_detection)
+            run_init(
+                &source,
+                output.as_deref(),
+                force,
+                &filter,
+                no_pk_detection,
+                no_fk_detection,
+            )
         }
-        Commands::ToCsvdb { input, output, order, null_mode, natural_sort, order_by, compress, incremental, pipe, force, tables, exclude } => {
+        Commands::ToCsvdb {
+            input,
+            output,
+            order,
+            null_mode,
+            natural_sort,
+            order_by,
+            compress,
+            incremental,
+            pipe,
+            force,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             let (order, null_mode, order_by) = resolve_config(&input, order, null_mode, order_by);
             if incremental {
-                run_to_csvdb_incremental(&input, output.as_deref(), order, null_mode, natural_sort, order_by.as_deref(), compress, pipe, &filter)
+                run_to_csvdb_incremental(
+                    &input,
+                    output.as_deref(),
+                    order,
+                    null_mode,
+                    natural_sort,
+                    order_by.as_deref(),
+                    compress,
+                    pipe,
+                    &filter,
+                )
             } else {
-                run_to_csvdb(&input, output.as_deref(), order, null_mode, natural_sort, order_by.as_deref(), compress, pipe, force, &filter)
+                run_to_csvdb(
+                    &input,
+                    output.as_deref(),
+                    order,
+                    null_mode,
+                    natural_sort,
+                    order_by.as_deref(),
+                    compress,
+                    pipe,
+                    force,
+                    &filter,
+                )
             }
         }
-        Commands::ToSqlite { input, output, force, tables, exclude } => {
+        Commands::ToSqlite {
+            input,
+            output,
+            force,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             run_to_sqlite(&input, output.as_deref(), force, &filter)
         }
-        Commands::ToDuckdb { input, output, force, tables, exclude } => {
+        Commands::ToDuckdb {
+            input,
+            output,
+            force,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             run_to_duckdb(&input, output.as_deref(), force, &filter)
         }
-        Commands::ToParquetdb { input, output, order, null_mode, natural_sort: _, order_by, pipe, force, tables, exclude } => {
+        Commands::ToParquetdb {
+            input,
+            output,
+            order,
+            null_mode,
+            natural_sort: _,
+            order_by,
+            pipe,
+            force,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             let (order, null_mode, order_by) = resolve_config(&input, order, null_mode, order_by);
-            run_to_parquetdb(&input, output.as_deref(), order, null_mode, order_by.as_deref(), pipe, force, &filter)
+            run_to_parquetdb(
+                &input,
+                output.as_deref(),
+                order,
+                null_mode,
+                order_by.as_deref(),
+                pipe,
+                force,
+                &filter,
+            )
         }
         Commands::Validate { path } => run_validate(&path),
-        Commands::Diff { left, right, summary, tables, exclude } => {
+        Commands::Diff {
+            left,
+            right,
+            summary,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             run_diff(&left, &right, summary, &filter)
         }
-        Commands::Checksum { path, tables, exclude } => {
+        Commands::Checksum {
+            path,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             run_checksum(&path, &filter)
         }
-        Commands::Sql { query, path, format } => {
+        Commands::Sql {
+            query,
+            path,
+            format,
+        } => {
             let format = format.map(|f| match f {
                 SqlFormat::Csv => sql::OutputFormat::Csv,
                 SqlFormat::Table => sql::OutputFormat::Table,
             });
             run_sql(&path, &query, format)
         }
-        Commands::Watch { path, target, order, null_mode, order_by, debounce, tables, exclude } => {
+        Commands::Watch {
+            path,
+            target,
+            order,
+            null_mode,
+            order_by,
+            debounce,
+            tables,
+            exclude,
+        } => {
             let filter = TableFilter::new(tables, exclude);
             let (order, null_mode, order_by) = resolve_config(&path, order, null_mode, order_by);
-            run_watch(&path, target, order, null_mode, order_by.as_deref(), debounce, &filter)
+            run_watch(
+                &path,
+                target,
+                order,
+                null_mode,
+                order_by.as_deref(),
+                debounce,
+                &filter,
+            )
         }
         Commands::Hooks { action } => run_hooks(action),
     };
@@ -365,7 +479,12 @@ fn main() -> ExitCode {
 }
 
 /// Resolve order, null_mode, and order_by from CLI flags, falling back to config file then defaults.
-fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Option<NullMode>, cli_order_by: Option<String>) -> (OrderMode, NullMode, Option<String>) {
+fn resolve_config(
+    input: &Path,
+    cli_order: Option<OrderMode>,
+    cli_null_mode: Option<NullMode>,
+    cli_order_by: Option<String>,
+) -> (OrderMode, NullMode, Option<String>) {
     // Try to load config from input directory (if it's a csvdb/parquetdb directory)
     let config = if let Ok(format) = InputFormat::from_path(input) {
         if format.is_directory() {
@@ -378,8 +497,7 @@ fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Opt
     };
 
     // order_by takes precedence: CLI flag -> config -> None
-    let order_by = cli_order_by
-        .or_else(|| config.as_ref().and_then(|c| c.order_by.clone()));
+    let order_by = cli_order_by.or_else(|| config.as_ref().and_then(|c| c.order_by.clone()));
 
     let order = if order_by.is_some() {
         // When order_by is set, order mode is irrelevant but we still resolve it
@@ -397,7 +515,14 @@ fn resolve_config(input: &Path, cli_order: Option<OrderMode>, cli_null_mode: Opt
     (order, null_mode, order_by)
 }
 
-fn run_init(source: &Path, output: Option<&Path>, force: bool, filter: &TableFilter, no_pk_detection: bool, no_fk_detection: bool) -> Result<ExitCode> {
+fn run_init(
+    source: &Path,
+    output: Option<&Path>,
+    force: bool,
+    filter: &TableFilter,
+    no_pk_detection: bool,
+    no_fk_detection: bool,
+) -> Result<ExitCode> {
     let config = init::InferConfig {
         detect_pk: !no_pk_detection,
         detect_fk: !no_fk_detection,
@@ -438,7 +563,18 @@ fn run_init(source: &Path, output: Option<&Path>, force: bool, filter: &TableFil
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_csvdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_csvdb(
+    input: &Path,
+    output: Option<&Path>,
+    order: OrderMode,
+    null_mode: NullMode,
+    natural_sort: bool,
+    order_by: Option<&str>,
+    compress: bool,
+    pipe: bool,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
     // Warn about lossy null modes unless in pipe mode (quiet)
     if null_mode.is_lossy() && !pipe {
         match null_mode {
@@ -457,7 +593,8 @@ fn run_to_csvdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode
     let output_path: Option<PathBuf>;
     let effective_output = if pipe && output.is_none() {
         // Create temp directory path based on input filename
-        let stem = input.file_stem()
+        let stem = input
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("csvdb");
         output_path = Some(std::env::temp_dir().join(format!("{stem}.csvdb")));
@@ -466,7 +603,17 @@ fn run_to_csvdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode
         output
     };
 
-    let csvdir = to_csv::to_csv(input, order, null_mode, natural_sort, order_by, compress, effective_output, pipe || force, filter)?;
+    let csvdir = to_csv::to_csv(
+        input,
+        order,
+        null_mode,
+        natural_sort,
+        order_by,
+        compress,
+        effective_output,
+        pipe || force,
+        filter,
+    )?;
 
     if pipe {
         // Quiet mode: just output the path for piping
@@ -479,10 +626,21 @@ fn run_to_csvdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_csvdb_incremental(input: &Path, output: Option<&Path>, order: OrderMode, null_mode: NullMode, natural_sort: bool, order_by: Option<&str>, compress: bool, pipe: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_csvdb_incremental(
+    input: &Path,
+    output: Option<&Path>,
+    order: OrderMode,
+    null_mode: NullMode,
+    natural_sort: bool,
+    order_by: Option<&str>,
+    compress: bool,
+    pipe: bool,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
     let output_path: Option<PathBuf>;
     let effective_output = if pipe && output.is_none() {
-        let stem = input.file_stem()
+        let stem = input
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("csvdb");
         output_path = Some(std::env::temp_dir().join(format!("{stem}.csvdb")));
@@ -491,7 +649,16 @@ fn run_to_csvdb_incremental(input: &Path, output: Option<&Path>, order: OrderMod
         output
     };
 
-    let (csvdir, summary) = to_csv::to_csv_incremental(input, order, null_mode, natural_sort, order_by, compress, effective_output, filter)?;
+    let (csvdir, summary) = to_csv::to_csv_incremental(
+        input,
+        order,
+        null_mode,
+        natural_sort,
+        order_by,
+        compress,
+        effective_output,
+        filter,
+    )?;
 
     if pipe {
         let path_str = csvdir.to_string_lossy().replace('\\', "/");
@@ -515,22 +682,42 @@ fn run_to_csvdb_incremental(input: &Path, output: Option<&Path>, order: OrderMod
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_sqlite(csvdir: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_sqlite(
+    csvdir: &Path,
+    output: Option<&Path>,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
     let db_path = to_sqlite::to_sqlite(csvdir, output, force, filter)?;
     println!("Created: {}", db_path.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_duckdb(csvdir: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_duckdb(
+    csvdir: &Path,
+    output: Option<&Path>,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
     let db_path = to_duckdb::to_duckdb(csvdir, output, force, filter)?;
     println!("Created: {}", db_path.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_to_parquetdb(input: &Path, output: Option<&Path>, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, pipe: bool, force: bool, filter: &TableFilter) -> Result<ExitCode> {
+fn run_to_parquetdb(
+    input: &Path,
+    output: Option<&Path>,
+    order: OrderMode,
+    null_mode: NullMode,
+    order_by: Option<&str>,
+    pipe: bool,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
     let output_path: Option<PathBuf>;
     let effective_output = if pipe && output.is_none() {
-        let stem = input.file_stem()
+        let stem = input
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("parquetdb");
         output_path = Some(std::env::temp_dir().join(format!("{stem}.parquetdb")));
@@ -539,7 +726,15 @@ fn run_to_parquetdb(input: &Path, output: Option<&Path>, order: OrderMode, null_
         output
     };
 
-    let parquetdb = to_parquetdb::to_parquetdb(input, order, null_mode, order_by, effective_output, pipe || force, filter)?;
+    let parquetdb = to_parquetdb::to_parquetdb(
+        input,
+        order,
+        null_mode,
+        order_by,
+        effective_output,
+        pipe || force,
+        filter,
+    )?;
 
     if pipe {
         let path_str = parquetdb.to_string_lossy().replace('\\', "/");
@@ -579,7 +774,15 @@ fn run_sql(path: &Path, query: &str, format: Option<sql::OutputFormat>) -> Resul
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_watch(path: &Path, target: watch::WatchTarget, order: OrderMode, null_mode: NullMode, order_by: Option<&str>, debounce: u64, filter: &TableFilter) -> Result<ExitCode> {
+fn run_watch(
+    path: &Path,
+    target: watch::WatchTarget,
+    order: OrderMode,
+    null_mode: NullMode,
+    order_by: Option<&str>,
+    debounce: u64,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
     watch::watch(path, target, order, null_mode, order_by, debounce, filter)?;
     Ok(ExitCode::SUCCESS)
 }

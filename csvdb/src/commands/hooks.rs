@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::Path;
 
@@ -54,8 +54,9 @@ pub fn install(repo_dir: &Path) -> Result<()> {
     let hooks_dir = find_hooks_dir(repo_dir)?;
 
     if !hooks_dir.exists() {
-        fs::create_dir_all(&hooks_dir)
-            .with_context(|| format!("Failed to create hooks directory: {}", hooks_dir.display()))?;
+        fs::create_dir_all(&hooks_dir).with_context(|| {
+            format!("Failed to create hooks directory: {}", hooks_dir.display())
+        })?;
     }
 
     let installed = install_hook(&hooks_dir, "pre-commit", PRE_COMMIT_HOOK)?;
@@ -84,8 +85,9 @@ pub fn install_force(repo_dir: &Path) -> Result<()> {
     let hooks_dir = find_hooks_dir(repo_dir)?;
 
     if !hooks_dir.exists() {
-        fs::create_dir_all(&hooks_dir)
-            .with_context(|| format!("Failed to create hooks directory: {}", hooks_dir.display()))?;
+        fs::create_dir_all(&hooks_dir).with_context(|| {
+            format!("Failed to create hooks directory: {}", hooks_dir.display())
+        })?;
     }
 
     write_hook(&hooks_dir, "pre-commit", PRE_COMMIT_HOOK)?;
@@ -167,9 +169,7 @@ fn install_hook(hooks_dir: &Path, name: &str, content: &str) -> Result<bool> {
             return Ok(false); // Already installed
         }
         // Existing hook that's not ours — don't overwrite
-        eprintln!(
-            "Warning: {name} hook already exists and is not a csvdb hook. Skipping."
-        );
+        eprintln!("Warning: {name} hook already exists and is not a csvdb hook. Skipping.");
         eprintln!("  Use 'csvdb hooks install --force' to overwrite.");
         return Ok(false);
     }
@@ -199,8 +199,8 @@ fn write_hook(hooks_dir: &Path, name: &str, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::process::Command;
+    use tempfile::tempdir;
 
     fn init_git_repo(dir: &Path) {
         Command::new("git")
@@ -269,7 +269,10 @@ mod tests {
 
         let hooks_dir = dir.path().join(".git").join("hooks");
         fs::create_dir_all(&hooks_dir)?;
-        fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho 'custom hook'")?;
+        fs::write(
+            hooks_dir.join("pre-commit"),
+            "#!/bin/sh\necho 'custom hook'",
+        )?;
 
         uninstall(dir.path())?;
 
@@ -286,7 +289,10 @@ mod tests {
 
         let hooks_dir = dir.path().join(".git").join("hooks");
         fs::create_dir_all(&hooks_dir)?;
-        fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho 'custom hook'")?;
+        fs::write(
+            hooks_dir.join("pre-commit"),
+            "#!/bin/sh\necho 'custom hook'",
+        )?;
 
         install_force(dir.path())?;
 
@@ -302,7 +308,10 @@ mod tests {
         // No git init
         let result = install(dir.path());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Not a git repository"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Not a git repository"));
     }
 
     #[test]
@@ -313,7 +322,10 @@ mod tests {
         let hooks_dir = dir.path().join(".git").join("hooks");
         fs::create_dir_all(&hooks_dir)?;
         // Write a non-csvdb pre-commit hook
-        fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho 'custom linter'")?;
+        fs::write(
+            hooks_dir.join("pre-commit"),
+            "#!/bin/sh\necho 'custom linter'",
+        )?;
 
         install(dir.path())?;
 
@@ -348,7 +360,12 @@ mod tests {
         // Simulate a worktree by creating a .git file pointing to a gitdir
         let wt = dir.path().join("worktree");
         fs::create_dir(&wt)?;
-        let git_dir = dir.path().join("repo").join(".git").join("worktrees").join("wt");
+        let git_dir = dir
+            .path()
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join("wt");
         fs::create_dir_all(&git_dir)?;
         fs::write(wt.join(".git"), format!("gitdir: {}", git_dir.display()))?;
 

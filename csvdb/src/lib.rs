@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
-pub mod core;
 pub mod commands;
+pub mod core;
 
 pub use commands::{init, to_csv, to_duckdb, to_sqlite};
 pub use core::config::CsvdbConfig;
@@ -67,8 +67,8 @@ pub const NULL_MARKER: &str = "\\N";
 
 /// Filter for selecting a subset of tables.
 pub struct TableFilter {
-    pub tables: Vec<String>,   // include list (empty = all)
-    pub exclude: Vec<String>,  // exclude list
+    pub tables: Vec<String>,  // include list (empty = all)
+    pub exclude: Vec<String>, // exclude list
 }
 
 impl TableFilter {
@@ -117,14 +117,23 @@ mod tests {
     fn test_null_mode_alias_parsing() {
         use clap::ValueEnum;
         // "postgres" and "mysql" should resolve to Marker
-        assert_eq!(NullMode::from_str("postgres", true).unwrap(), NullMode::Marker);
+        assert_eq!(
+            NullMode::from_str("postgres", true).unwrap(),
+            NullMode::Marker
+        );
         assert_eq!(NullMode::from_str("mysql", true).unwrap(), NullMode::Marker);
         // "excel" should resolve to Empty
         assert_eq!(NullMode::from_str("excel", true).unwrap(), NullMode::Empty);
         // canonical names still work
-        assert_eq!(NullMode::from_str("marker", true).unwrap(), NullMode::Marker);
+        assert_eq!(
+            NullMode::from_str("marker", true).unwrap(),
+            NullMode::Marker
+        );
         assert_eq!(NullMode::from_str("empty", true).unwrap(), NullMode::Empty);
-        assert_eq!(NullMode::from_str("literal", true).unwrap(), NullMode::Literal);
+        assert_eq!(
+            NullMode::from_str("literal", true).unwrap(),
+            NullMode::Literal
+        );
     }
 
     #[test]

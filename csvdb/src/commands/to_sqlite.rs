@@ -11,7 +11,12 @@ use crate::core::{InputFormat, Schema};
 use crate::{NullMode, OrderMode, TableFilter};
 
 /// Convert any supported format to a SQLite database.
-pub fn to_sqlite(input_path: &Path, output: Option<&Path>, force: bool, filter: &TableFilter) -> Result<PathBuf> {
+pub fn to_sqlite(
+    input_path: &Path,
+    output: Option<&Path>,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<PathBuf> {
     let input_format = InputFormat::from_path(input_path)?;
 
     // For non-csvdb formats, convert to csvdb first in a temp directory
@@ -51,10 +56,7 @@ pub fn to_sqlite(input_path: &Path, output: Option<&Path>, force: bool, filter: 
             .or_else(|| stem.strip_suffix(".parquetdb"))
             .unwrap_or(stem);
         let db_name = format!("{stem}.sqlite");
-        input_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(db_name)
+        input_path.parent().unwrap_or(Path::new(".")).join(db_name)
     };
 
     // Check for existing database
@@ -69,9 +71,10 @@ pub fn to_sqlite(input_path: &Path, output: Option<&Path>, force: bool, filter: 
     }
 
     // Check if any table files are compressed (.csv.gz)
-    let has_compressed = schema.tables.keys().any(|t| {
-        csvdb_dir.join(format!("{t}.csv.gz")).exists()
-    });
+    let has_compressed = schema
+        .tables
+        .keys()
+        .any(|t| csvdb_dir.join(format!("{t}.csv.gz")).exists());
 
     // Try to use sqlite3 CLI for fast import, fall back to rusqlite if unavailable.
     // sqlite3 CLI cannot read .csv.gz files, so use rusqlite for compressed data.
@@ -114,7 +117,8 @@ fn to_sqlite_via_cli(
     commands.push_str("PRAGMA foreign_keys = OFF;\n");
 
     // Read and execute schema
-    let abs_schema_path = schema_path.canonicalize()
+    let abs_schema_path = schema_path
+        .canonicalize()
         .with_context(|| format!("Failed to get absolute path: {}", schema_path.display()))?;
     commands.push_str(&format!(".read '{}'\n", abs_schema_path.display()));
 
@@ -125,7 +129,8 @@ fn to_sqlite_via_cli(
             continue;
         }
         if let Some(csv_path) = find_table_file(csvdb_dir, table_name) {
-            let abs_csv_path = csv_path.canonicalize()
+            let abs_csv_path = csv_path
+                .canonicalize()
                 .with_context(|| format!("Failed to get absolute path: {}", csv_path.display()))?;
             // .import with --skip 1 to skip header row
             commands.push_str(&format!(
@@ -161,12 +166,12 @@ fn to_sqlite_via_cli(
 
     // Write commands to stdin
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(commands.as_bytes())
+        stdin
+            .write_all(commands.as_bytes())
             .context("Failed to write to sqlite3 stdin")?;
     }
 
-    let output = child.wait_with_output()
-        .context("Failed to run sqlite3")?;
+    let output = child.wait_with_output().context("Failed to run sqlite3")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -235,7 +240,7 @@ fn to_sqlite_via_rusqlite(
 mod tests {
     use super::*;
     use crate::commands::to_csv::to_csv;
-    use crate::{OrderMode, NullMode, TableFilter};
+    use crate::{NullMode, OrderMode, TableFilter};
     use tempfile::tempdir;
 
     #[test]
@@ -255,7 +260,17 @@ mod tests {
         }
 
         // Convert to CSV
-        let csvdb = to_csv(&db_path, OrderMode::Pk, NullMode::Marker, false, None, false, None, true, &TableFilter::new(vec![], vec![]))?;
+        let csvdb = to_csv(
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            false,
+            None,
+            false,
+            None,
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
 
         // Remove original database
         fs::remove_file(&db_path)?;
@@ -268,11 +283,8 @@ mod tests {
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
         assert_eq!(count, 2);
 
-        let name: String = conn.query_row(
-            "SELECT name FROM users WHERE id = 1",
-            [],
-            |r| r.get(0),
-        )?;
+        let name: String =
+            conn.query_row("SELECT name FROM users WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(name, "Alice");
 
         Ok(())
@@ -290,7 +302,12 @@ mod tests {
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
 
         let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
-        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("foo.sqlite"));
+        assert!(db_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("foo.sqlite"));
         Ok(())
     }
 
@@ -307,7 +324,12 @@ mod tests {
 
         let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
         // Input "bar" (no .csvdb suffix) -> output "bar.sqlite"
-        assert!(db_path.file_name().unwrap().to_str().unwrap().ends_with("bar.sqlite"));
+        assert!(db_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("bar.sqlite"));
         Ok(())
     }
 
@@ -401,7 +423,12 @@ mod tests {
 
         // SQLite input (non-csvdb) goes through to_csv internally
         let output = dir.path().join("out.sqlite");
-        let db_path = to_sqlite(&src_db, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_sqlite(
+            &src_db,
+            Some(&output),
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
 
         let conn = Connection::open(&db_path)?;
         let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
@@ -421,7 +448,12 @@ mod tests {
         }
 
         let output = dir.path().join("out.sqlite");
-        let db_path = to_sqlite(&duckdb_path, Some(&output), true, &TableFilter::new(vec![], vec![]))?;
+        let db_path = to_sqlite(
+            &duckdb_path,
+            Some(&output),
+            true,
+            &TableFilter::new(vec![], vec![]),
+        )?;
 
         let conn = Connection::open(&db_path)?;
         let name: String = conn.query_row("SELECT name FROM t WHERE id = 1", [], |r| r.get(0))?;
@@ -439,12 +471,16 @@ mod tests {
             csvdb_dir.join("schema.sql"),
             "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
         )?;
-        fs::write(csvdb_dir.join("t.csv"), "\"id\",\"name\"\n\"1\",\"Alice\"\n\"2\",\"\\N\"\n")?;
+        fs::write(
+            csvdb_dir.join("t.csv"),
+            "\"id\",\"name\"\n\"1\",\"Alice\"\n\"2\",\"\\N\"\n",
+        )?;
 
         let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec![], vec![]))?;
 
         let conn = Connection::open(&db_path)?;
-        let name: Option<String> = conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
+        let name: Option<String> =
+            conn.query_row("SELECT name FROM t WHERE id = 2", [], |r| r.get(0))?;
         assert_eq!(name, None);
         Ok(())
     }
@@ -463,7 +499,12 @@ mod tests {
         fs::write(csvdb_dir.join("t1.csv"), "id\n1\n")?;
         fs::write(csvdb_dir.join("t2.csv"), "id\n1\n")?;
 
-        let db_path = to_sqlite(&csvdb_dir, None, true, &TableFilter::new(vec!["t1".to_string()], vec![]))?;
+        let db_path = to_sqlite(
+            &csvdb_dir,
+            None,
+            true,
+            &TableFilter::new(vec!["t1".to_string()], vec![]),
+        )?;
 
         let conn = Connection::open(&db_path)?;
         // t1 should have data

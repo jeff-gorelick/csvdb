@@ -5,5 +5,5 @@ pub mod schema;
 pub mod table;
 
 pub use input::InputFormat;
-pub use schema::{Schema, TableSchema, Column, Index, View, parse_index_sql, normalize_view_sql};
-pub use table::{Table, Row, TableReadResult, SYNTHETIC_KEY_COLUMN};
+pub use schema::{normalize_view_sql, parse_index_sql, Column, Index, Schema, TableSchema, View};
+pub use table::{Row, Table, TableReadResult, SYNTHETIC_KEY_COLUMN};

@@ -53,8 +53,8 @@ pub fn to_parquetdb(
     fs::create_dir_all(&parquetdb_dir)?;
 
     // Load into in-memory DuckDB, then export to parquet
-    let conn = Connection::open_in_memory()
-        .context("Failed to create in-memory DuckDB connection")?;
+    let conn =
+        Connection::open_in_memory().context("Failed to create in-memory DuckDB connection")?;
 
     // Explicitly load parquet extension (autoload can fail on some platforms)
     conn.execute("INSTALL parquet", []).ok();
@@ -121,7 +121,11 @@ pub fn to_parquetdb(
     let config = CsvdbConfig {
         format_version: Some(CURRENT_FORMAT_VERSION.to_string()),
         created_by: Some(created_by_string()),
-        order: if order_by.is_none() { Some(order_str.to_string()) } else { None },
+        order: if order_by.is_none() {
+            Some(order_str.to_string())
+        } else {
+            None
+        },
         null_mode: Some(null_str.to_string()),
         natural_sort: None,
         order_by: order_by.map(|s| s.to_string()),
@@ -157,10 +161,7 @@ fn make_progress_bar(len: u64) -> ProgressBar {
     }
 }
 
-fn build_order_clause(
-    table_schema: &crate::core::TableSchema,
-    order_mode: OrderMode,
-) -> String {
+fn build_order_clause(table_schema: &crate::core::TableSchema, order_mode: OrderMode) -> String {
     match order_mode {
         OrderMode::Pk => {
             if table_schema.pk_columns.is_empty() {
@@ -203,9 +204,7 @@ fn load_sqlite(conn: &Connection, path: &Path) -> Result<Schema> {
 
     for table_name in schema.tables.keys() {
         conn.execute(
-            &format!(
-                "CREATE TABLE \"{table_name}\" AS SELECT * FROM src.\"{table_name}\""
-            ),
+            &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM src.\"{table_name}\""),
             [],
         )?;
     }
@@ -233,9 +232,7 @@ fn load_duckdb(conn: &Connection, path: &Path) -> Result<Schema> {
 
     for table_name in schema.tables.keys() {
         conn.execute(
-            &format!(
-                "CREATE TABLE \"{table_name}\" AS SELECT * FROM src.\"{table_name}\""
-            ),
+            &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM src.\"{table_name}\""),
             [],
         )?;
     }
@@ -269,9 +266,7 @@ fn load_csvdb(conn: &Connection, path: &Path) -> Result<Schema> {
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             conn.execute(
-                &format!(
-                    "COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"
-                ),
+                &format!("COPY \"{table_name}\" FROM '{path_str}' (HEADER, NULL '\\N')"),
                 [],
             )?;
         }
@@ -304,9 +299,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<Schema> {
             let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
             conn.execute(
-                &format!(
-                    "INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"
-                ),
+                &format!("INSERT INTO \"{table_name}\" SELECT * FROM read_parquet('{path_str}')"),
                 [],
             )?;
         }
@@ -316,10 +309,7 @@ fn load_parquetdb(conn: &Connection, path: &Path) -> Result<Schema> {
 }
 
 fn load_single_parquet(conn: &Connection, path: &Path) -> Result<Schema> {
-    let table_name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("table");
+    let table_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("table");
 
     let abs_path = path.canonicalize()?;
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -327,9 +317,7 @@ fn load_single_parquet(conn: &Connection, path: &Path) -> Result<Schema> {
 
     // Create table from parquet
     conn.execute(
-        &format!(
-            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"
-        ),
+        &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}')"),
         [],
     )?;
 
@@ -381,9 +369,7 @@ mod tests {
         let parquet_path = parquetdb.join("users.parquet").canonicalize()?;
         let path_str = parquet_path.to_string_lossy().replace('\\', "/");
         conn.execute(
-            &format!(
-                "CREATE TABLE users AS SELECT * FROM read_parquet('{path_str}')"
-            ),
+            &format!("CREATE TABLE users AS SELECT * FROM read_parquet('{path_str}')"),
             [],
         )?;
 
@@ -403,7 +389,10 @@ mod tests {
             csvdb_dir.join("schema.sql"),
             "CREATE TABLE \"items\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
         )?;
-        fs::write(csvdb_dir.join("items.csv"), "\"id\",\"name\"\n\"1\",\"Apple\"\n\"2\",\"Banana\"\n")?;
+        fs::write(
+            csvdb_dir.join("items.csv"),
+            "\"id\",\"name\"\n\"1\",\"Apple\"\n\"2\",\"Banana\"\n",
+        )?;
 
         let parquetdb = to_parquetdb(
             &csvdb_dir,
@@ -433,7 +422,12 @@ mod tests {
         }
 
         let parquetdb = to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
 
@@ -455,12 +449,22 @@ mod tests {
 
         // sqlite -> parquetdb -> parquetdb (with explicit output to avoid path collision)
         let pdb1 = to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
         let pdb2_path = dir.path().join("copy.parquetdb");
         let pdb2 = to_parquetdb(
-            &pdb1, OrderMode::Pk, NullMode::Marker, None, Some(&pdb2_path), true,
+            &pdb1,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            Some(&pdb2_path),
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
 
@@ -470,7 +474,10 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         let abs = pdb2.join("t.parquet").canonicalize()?;
         let p = abs.to_string_lossy().replace('\\', "/");
-        conn.execute(&format!("CREATE TABLE t AS SELECT * FROM read_parquet('{p}')"), [])?;
+        conn.execute(
+            &format!("CREATE TABLE t AS SELECT * FROM read_parquet('{p}')"),
+            [],
+        )?;
         let val: String = conn.query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))?;
         assert_eq!(val, "round");
         Ok(())
@@ -484,13 +491,21 @@ mod tests {
         {
             let conn = SqliteConnection::open(&db_path)?;
             // Use a table with PK (load_sqlite in to_parquetdb uses from_sqlite which requires PK)
-            conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, category TEXT, price REAL)", [])?;
+            conn.execute(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, category TEXT, price REAL)",
+                [],
+            )?;
             conn.execute("INSERT INTO items VALUES (1, 'A', 10.0)", [])?;
             conn.execute("INSERT INTO items VALUES (2, 'B', 20.0)", [])?;
         }
 
         let parquetdb = to_parquetdb(
-            &db_path, OrderMode::AllColumns, NullMode::Marker, None, None, true,
+            &db_path,
+            OrderMode::AllColumns,
+            NullMode::Marker,
+            None,
+            None,
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
 
@@ -511,7 +526,12 @@ mod tests {
         }
 
         let parquetdb = to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, Some("name ASC"), None, true,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            Some("name ASC"),
+            None,
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
 
@@ -531,13 +551,23 @@ mod tests {
 
         // First create with force
         to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
 
         // Second without force should fail
         let result = to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, None, None, false,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            false,
             &TableFilter::new(vec![], vec![]),
         );
         assert!(result.is_err());
@@ -559,7 +589,12 @@ mod tests {
         }
 
         let parquetdb = to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, None, None, true,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            None,
+            true,
             &TableFilter::new(vec!["t1".to_string()], vec![]),
         )?;
 
@@ -580,7 +615,12 @@ mod tests {
         }
 
         let parquetdb = to_parquetdb(
-            &db_path, OrderMode::Pk, NullMode::Marker, None, Some(&output), true,
+            &db_path,
+            OrderMode::Pk,
+            NullMode::Marker,
+            None,
+            Some(&output),
+            true,
             &TableFilter::new(vec![], vec![]),
         )?;
 

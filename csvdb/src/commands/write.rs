@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::commands::sql::arrow_value_to_string;
-use crate::core::config::{CsvdbConfig, CURRENT_FORMAT_VERSION, created_by_string};
+use crate::core::config::{created_by_string, CsvdbConfig, CURRENT_FORMAT_VERSION};
 use crate::NULL_MARKER;
 
 /// Write Arrow tables to a csvdb directory.
@@ -63,17 +63,20 @@ pub fn write_csvdb_from_arrow(
 fn arrow_type_to_sql(dt: &DataType) -> &'static str {
     match dt {
         DataType::Boolean => "INTEGER",
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
-        | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => "INTEGER",
+        DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => "INTEGER",
         DataType::Float16 | DataType::Float32 | DataType::Float64 => "REAL",
         _ => "TEXT",
     }
 }
 
-fn arrow_schema_to_create_table(
-    name: &str,
-    schema: &arrow::datatypes::Schema,
-) -> String {
+fn arrow_schema_to_create_table(name: &str, schema: &arrow::datatypes::Schema) -> String {
     let mut sql = format!("CREATE TABLE \"{name}\" (\n");
 
     let fields = schema.fields();

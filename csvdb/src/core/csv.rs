@@ -7,8 +7,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
-use super::table::{Row, Table, natural_cmp};
 use super::schema::TableSchema;
+use super::table::{natural_cmp, Row, Table};
 
 /// Write a table to CSV with deterministic formatting.
 /// - Header row with column names
@@ -20,8 +20,8 @@ pub fn write_table_csv(table: &Table, path: &Path) -> Result<()> {
 
 /// Write a table to CSV with optional natural sort.
 pub fn write_table_csv_sorted(table: &Table, path: &Path, natural_sort: bool) -> Result<()> {
-    let file = File::create(path)
-        .with_context(|| format!("Failed to create CSV: {}", path.display()))?;
+    let file =
+        File::create(path).with_context(|| format!("Failed to create CSV: {}", path.display()))?;
 
     let mut writer = WriterBuilder::new()
         .quote_style(csv::QuoteStyle::Always)
@@ -92,7 +92,8 @@ pub fn write_table_csv_gz(table: &Table, path: &Path, natural_sort: bool) -> Res
 
     writer.flush()?;
     // Finish the gzip stream
-    writer.into_inner()
+    writer
+        .into_inner()
         .map_err(|e| anyhow::anyhow!("CSV flush error: {e}"))?
         .finish()?;
 
@@ -129,15 +130,14 @@ fn read_table_csv_gz(path: &Path, schema: &TableSchema) -> Result<Table> {
 
     let decoder = GzDecoder::new(BufReader::new(file));
 
-    let mut reader = ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(decoder);
+    let mut reader = ReaderBuilder::new().has_headers(true).from_reader(decoder);
 
     let headers = reader.headers()?.clone();
     let columns: Vec<String> = headers.iter().map(|s| s.to_string()).collect();
 
     // Find primary key column indices
-    let pk_indices: Vec<usize> = schema.pk_columns
+    let pk_indices: Vec<usize> = schema
+        .pk_columns
         .iter()
         .filter_map(|pk| columns.iter().position(|c| c == pk))
         .collect();
@@ -165,18 +165,17 @@ fn read_table_csv_gz(path: &Path, schema: &TableSchema) -> Result<Table> {
 
 /// Read a table from CSV file.
 pub fn read_table_csv(path: &Path, schema: &TableSchema) -> Result<Table> {
-    let file = File::open(path)
-        .with_context(|| format!("Failed to open CSV: {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("Failed to open CSV: {}", path.display()))?;
 
-    let mut reader = ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(file);
+    let mut reader = ReaderBuilder::new().has_headers(true).from_reader(file);
 
     let headers = reader.headers()?.clone();
     let columns: Vec<String> = headers.iter().map(|s| s.to_string()).collect();
 
     // Find primary key column indices
-    let pk_indices: Vec<usize> = schema.pk_columns
+    let pk_indices: Vec<usize> = schema
+        .pk_columns
         .iter()
         .filter_map(|pk| columns.iter().position(|c| c == pk))
         .collect();
@@ -379,15 +378,13 @@ mod tests {
     fn test_read_table_csv_auto_plain() -> Result<()> {
         let schema = TableSchema {
             name: "t".to_string(),
-            columns: vec![
-                crate::core::schema::Column {
-                    name: "id".to_string(),
-                    col_type: "INTEGER".to_string(),
-                    notnull: false,
-                    default_value: None,
-                    pk: 1,
-                },
-            ],
+            columns: vec![crate::core::schema::Column {
+                name: "id".to_string(),
+                col_type: "INTEGER".to_string(),
+                notnull: false,
+                default_value: None,
+                pk: 1,
+            }],
             pk_columns: vec!["id".to_string()],
             sql: String::new(),
             indexes: vec![],

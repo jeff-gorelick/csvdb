@@ -3,8 +3,8 @@ use arrow::record_batch::RecordBatch;
 use duckdb::Connection;
 use std::path::Path;
 
-use crate::core::input::InputFormat;
 use crate::commands::sql::load_data;
+use crate::core::input::InputFormat;
 use crate::TableFilter;
 
 /// Read all tables from any supported format as Arrow RecordBatches.
@@ -17,8 +17,8 @@ pub fn read_tables_arrow(
 ) -> Result<Vec<(String, Vec<RecordBatch>)>> {
     let input_format = InputFormat::from_path(path)?;
 
-    let conn = Connection::open_in_memory()
-        .context("Failed to create in-memory DuckDB connection")?;
+    let conn =
+        Connection::open_in_memory().context("Failed to create in-memory DuckDB connection")?;
 
     load_data(&conn, path, input_format)?;
 
@@ -36,21 +36,22 @@ pub fn read_tables_arrow(
 }
 
 /// Read a single table from any supported format as Arrow RecordBatches.
-pub fn read_table_arrow(
-    path: &Path,
-    table_name: &str,
-) -> Result<Vec<RecordBatch>> {
+pub fn read_table_arrow(path: &Path, table_name: &str) -> Result<Vec<RecordBatch>> {
     let input_format = InputFormat::from_path(path)?;
 
-    let conn = Connection::open_in_memory()
-        .context("Failed to create in-memory DuckDB connection")?;
+    let conn =
+        Connection::open_in_memory().context("Failed to create in-memory DuckDB connection")?;
 
     load_data(&conn, path, input_format)?;
 
     // Verify the table exists
     let table_names = get_table_names(&conn)?;
     if !table_names.iter().any(|t| t == table_name) {
-        bail!("Table '{}' not found. Available tables: {}", table_name, table_names.join(", "));
+        bail!(
+            "Table '{}' not found. Available tables: {}",
+            table_name,
+            table_names.join(", ")
+        );
     }
 
     query_table_arrow(&conn, table_name)
@@ -67,9 +68,11 @@ fn get_table_names(conn: &Connection) -> Result<Vec<String>> {
 
 fn query_table_arrow(conn: &Connection, table_name: &str) -> Result<Vec<RecordBatch>> {
     let query = format!("SELECT * FROM \"{table_name}\"");
-    let mut stmt = conn.prepare(&query)
+    let mut stmt = conn
+        .prepare(&query)
         .with_context(|| format!("Failed to prepare query for table: {table_name}"))?;
-    let arrow = stmt.query_arrow([])
+    let arrow = stmt
+        .query_arrow([])
         .with_context(|| format!("Failed to query table: {table_name}"))?;
     let batches: Vec<RecordBatch> = arrow.collect();
     Ok(batches)
@@ -92,7 +95,8 @@ mod tests {
         fs::write(
             csvdb_dir.join("users.csv"),
             "id,name,score\n1,Alice,95\n2,Bob,87\n3,Charlie,92\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         csvdb_dir
     }
@@ -108,14 +112,12 @@ mod tests {
                 "CREATE TABLE \"orders\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"user_id\" INTEGER,\n    \"total\" INTEGER\n);\n",
             ),
         ).unwrap();
-        fs::write(
-            csvdb_dir.join("users.csv"),
-            "id,name\n1,Alice\n2,Bob\n",
-        ).unwrap();
+        fs::write(csvdb_dir.join("users.csv"), "id,name\n1,Alice\n2,Bob\n").unwrap();
         fs::write(
             csvdb_dir.join("orders.csv"),
             "id,user_id,total\n1,1,100\n2,2,200\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         csvdb_dir
     }

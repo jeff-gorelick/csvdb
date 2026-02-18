@@ -7,9 +7,9 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-use crate::core::Schema;
-use crate::core::csv::find_table_file;
 use crate::core::config::{CsvdbConfig, CURRENT_FORMAT_VERSION};
+use crate::core::csv::find_table_file;
+use crate::core::Schema;
 
 /// Result of validating a .csvdb or .parquetdb directory.
 pub struct ValidateResult {
@@ -70,7 +70,11 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
             .par_iter()
             .map(|(table_name, table_schema)| {
                 let csv_path = find_table_file(csvdb_dir, table_name);
-                ((*table_name).clone(), csv_path.clone(), csv_path.map(|p| validate_csv(&p, table_schema)))
+                (
+                    (*table_name).clone(),
+                    csv_path.clone(),
+                    csv_path.map(|p| validate_csv(&p, table_schema)),
+                )
             })
             .collect();
 
@@ -89,10 +93,18 @@ fn validate_csvdb(csvdb_dir: &Path) -> Result<ValidateResult> {
 
             match result.unwrap() {
                 Ok(csv_result) => {
-                    println!("  {} .............. OK ({} rows)", display_name, csv_result.row_count);
+                    println!(
+                        "  {} .............. OK ({} rows)",
+                        display_name, csv_result.row_count
+                    );
                     if !csv_result.duplicate_pks.is_empty() {
                         let count = csv_result.duplicate_pks.len();
-                        let examples: Vec<&str> = csv_result.duplicate_pks.iter().take(3).map(|s| s.as_str()).collect();
+                        let examples: Vec<&str> = csv_result
+                            .duplicate_pks
+                            .iter()
+                            .take(3)
+                            .map(|s| s.as_str())
+                            .collect();
                         let msg = format!(
                             "{}: {} duplicate primary key(s) found (e.g. {})",
                             display_name,
@@ -175,12 +187,9 @@ struct CsvValidateResult {
 
 /// Validate a single CSV file against its schema.
 /// Supports both .csv and .csv.gz files.
-fn validate_csv(
-    csv_path: &Path,
-    schema: &crate::core::TableSchema,
-) -> Result<CsvValidateResult> {
-    let file = File::open(csv_path)
-        .with_context(|| format!("Failed to open {}", csv_path.display()))?;
+fn validate_csv(csv_path: &Path, schema: &crate::core::TableSchema) -> Result<CsvValidateResult> {
+    let file =
+        File::open(csv_path).with_context(|| format!("Failed to open {}", csv_path.display()))?;
 
     let is_gz = csv_path.extension().map(|e| e == "gz").unwrap_or(false);
 
@@ -208,7 +217,8 @@ fn validate_csv(
     }
 
     // Determine PK column indices for duplicate detection
-    let pk_indices: Vec<usize> = schema.pk_columns
+    let pk_indices: Vec<usize> = schema
+        .pk_columns
         .iter()
         .filter_map(|pk| header_names.iter().position(|h| h == pk))
         .collect();
@@ -221,8 +231,7 @@ fn validate_csv(
     let expected_cols = schema.columns.len();
     let mut row_count = 0;
     for (i, result) in reader.records().enumerate() {
-        let record = result
-            .with_context(|| format!("parse error at row {}", i + 1))?;
+        let record = result.with_context(|| format!("parse error at row {}", i + 1))?;
         if record.len() != expected_cols {
             anyhow::bail!(
                 "row {} has {} columns, expected {}",
@@ -246,7 +255,10 @@ fn validate_csv(
         row_count += 1;
     }
 
-    Ok(CsvValidateResult { row_count, duplicate_pks })
+    Ok(CsvValidateResult {
+        row_count,
+        duplicate_pks,
+    })
 }
 
 fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
@@ -371,27 +383,29 @@ fn validate_parquetdb(parquetdb_dir: &Path) -> Result<ValidateResult> {
 }
 
 /// Validate a single Parquet file against its schema using DuckDB.
-fn validate_parquet(
-    parquet_path: &Path,
-    schema: &crate::core::TableSchema,
-) -> Result<usize> {
+fn validate_parquet(parquet_path: &Path, schema: &crate::core::TableSchema) -> Result<usize> {
     let conn = duckdb::Connection::open_in_memory()
         .context("Failed to create in-memory DuckDB connection")?;
 
-    let abs_path = parquet_path.canonicalize()
+    let abs_path = parquet_path
+        .canonicalize()
         .with_context(|| format!("Failed to get absolute path: {}", parquet_path.display()))?;
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
     let path_str = path_str.strip_prefix("//?/").unwrap_or(&path_str);
 
     // Create a table from the parquet file to check its structure
-    let table_name = parquet_path.file_stem()
+    let table_name = parquet_path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("parquet_table");
 
     conn.execute(
-        &format!("CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}') LIMIT 0"),
+        &format!(
+            "CREATE TABLE \"{table_name}\" AS SELECT * FROM read_parquet('{path_str}') LIMIT 0"
+        ),
         [],
-    ).with_context(|| format!("Failed to read parquet file: {}", parquet_path.display()))?;
+    )
+    .with_context(|| format!("Failed to read parquet file: {}", parquet_path.display()))?;
 
     // Get column count from the created table
     let parquet_cols: usize = conn.query_row(
@@ -525,12 +539,18 @@ mod tests {
             "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
         )?;
         // Duplicate PK: id=1 appears twice
-        fs::write(csvdb_dir.join("t.csv"), "id,name\n1,Alice\n1,Bob\n2,Charlie\n")?;
+        fs::write(
+            csvdb_dir.join("t.csv"),
+            "id,name\n1,Alice\n1,Bob\n2,Charlie\n",
+        )?;
 
         let result = validate(&csvdb_dir)?;
         assert!(result.errors.is_empty());
         assert!(!result.warnings.is_empty());
-        assert!(result.warnings.iter().any(|w| w.contains("duplicate primary key")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("duplicate primary key")));
         Ok(())
     }
 
@@ -564,7 +584,10 @@ mod tests {
             csvdb_dir.join("schema.sql"),
             "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n",
         )?;
-        fs::write(csvdb_dir.join("t.csv"), "id,name\n1,Alice\n2,Bob\n3,Charlie\n")?;
+        fs::write(
+            csvdb_dir.join("t.csv"),
+            "id,name\n1,Alice\n2,Bob\n3,Charlie\n",
+        )?;
 
         let result = validate(&csvdb_dir)?;
         assert!(result.errors.is_empty());
@@ -612,7 +635,9 @@ mod tests {
             &db_path,
             crate::OrderMode::Pk,
             crate::NullMode::Marker,
-            None, None, true,
+            None,
+            None,
+            true,
             &crate::TableFilter::new(vec![], vec![]),
         )?;
 
@@ -716,10 +741,7 @@ mod tests {
             "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY\n);\n",
         )?;
         fs::write(csvdb_dir.join("t.csv"), "id\n1\n")?;
-        fs::write(
-            csvdb_dir.join("csvdb.toml"),
-            "format_version = \"999\"\n",
-        )?;
+        fs::write(csvdb_dir.join("csvdb.toml"), "format_version = \"999\"\n")?;
 
         let result = validate(&csvdb_dir)?;
         assert!(result.errors.is_empty());

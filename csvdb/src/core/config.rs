@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use crate::{OrderMode, NullMode};
+use crate::{NullMode, OrderMode};
 
 pub const CURRENT_FORMAT_VERSION: &str = "1";
 
@@ -54,19 +54,22 @@ impl CsvdbConfig {
 
     /// Parse the order field as an OrderMode.
     pub fn order_mode(&self) -> Option<OrderMode> {
-        self.order.as_ref().and_then(|s| OrderMode::from_str(s, true).ok())
+        self.order
+            .as_ref()
+            .and_then(|s| OrderMode::from_str(s, true).ok())
     }
 
     /// Parse the null_mode field as a NullMode.
     pub fn null_mode(&self) -> Option<NullMode> {
-        self.null_mode.as_ref().and_then(|s| NullMode::from_str(s, true).ok())
+        self.null_mode
+            .as_ref()
+            .and_then(|s| NullMode::from_str(s, true).ok())
     }
 
     /// Write config to a csvdb.toml file.
     pub fn write(&self, csvdb_dir: &Path) -> Result<()> {
         let config_path = csvdb_dir.join("csvdb.toml");
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize csvdb.toml")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize csvdb.toml")?;
         fs::write(&config_path, content)
             .with_context(|| format!("Failed to write {}", config_path.display()))?;
         Ok(())

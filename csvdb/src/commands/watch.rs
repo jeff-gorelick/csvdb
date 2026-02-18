@@ -119,22 +119,10 @@ fn rebuild(
     filter: &TableFilter,
 ) -> Result<PathBuf> {
     match target {
-        WatchTarget::Sqlite => {
-            crate::commands::to_sqlite::to_sqlite(path, None, true, filter)
-        }
-        WatchTarget::Duckdb => {
-            crate::commands::to_duckdb::to_duckdb(path, None, true, filter)
-        }
-        WatchTarget::Parquetdb => {
-            crate::commands::to_parquetdb::to_parquetdb(
-                path,
-                order,
-                null_mode,
-                order_by,
-                None,
-                true,
-                filter,
-            )
-        }
+        WatchTarget::Sqlite => crate::commands::to_sqlite::to_sqlite(path, None, true, filter),
+        WatchTarget::Duckdb => crate::commands::to_duckdb::to_duckdb(path, None, true, filter),
+        WatchTarget::Parquetdb => crate::commands::to_parquetdb::to_parquetdb(
+            path, order, null_mode, order_by, None, true, filter,
+        ),
     }
 }

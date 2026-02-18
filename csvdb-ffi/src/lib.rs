@@ -3,7 +3,9 @@ use std::ffi::{c_char, c_int, CStr, CString};
 use std::path::Path;
 use std::ptr;
 
-use csvdb::commands::{checksum, diff, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate};
+use csvdb::commands::{
+    checksum, diff, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate,
+};
 use csvdb::{NullMode, OrderMode, TableFilter};
 
 thread_local! {
@@ -30,7 +32,9 @@ unsafe fn to_str<'a>(s: *const c_char) -> Option<&'a str> {
 }
 
 fn to_cstring(s: &str) -> *mut c_char {
-    CString::new(s).map(|c| c.into_raw()).unwrap_or(ptr::null_mut())
+    CString::new(s)
+        .map(|c| c.into_raw())
+        .unwrap_or(ptr::null_mut())
 }
 
 fn parse_order(s: Option<&str>) -> OrderMode {
@@ -44,10 +48,20 @@ fn parse_order(s: Option<&str>) -> OrderMode {
 
 fn parse_filter(tables: Option<&str>, exclude: Option<&str>) -> TableFilter {
     let tables = tables
-        .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
     let exclude = exclude
-        .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
     TableFilter::new(tables, exclude)
 }
@@ -86,7 +100,10 @@ pub unsafe extern "C" fn csvdb_to_csvdb(
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("input is null".into());
+            return ptr::null_mut();
+        }
     };
     let output = unsafe { to_str(output) };
     let order_mode = parse_order(unsafe { to_str(order) });
@@ -106,7 +123,10 @@ pub unsafe extern "C" fn csvdb_to_csvdb(
         &filter,
     ) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -135,7 +155,10 @@ pub unsafe extern "C" fn csvdb_to_csvdb_incremental(
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("input is null".into());
+            return ptr::null_mut();
+        }
     };
     let output = unsafe { to_str(output) };
     let order_mode = parse_order(unsafe { to_str(order) });
@@ -156,15 +179,40 @@ pub unsafe extern "C" fn csvdb_to_csvdb_incremental(
         Ok((path, summary)) => {
             let json = format!(
                 r#"{{"path":"{}","unchanged":[{}],"updated":[{}],"added":[{}],"removed":[{}]}}"#,
-                path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""),
-                summary.unchanged.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
-                summary.updated.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
-                summary.added.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
-                summary.removed.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+                path.to_string_lossy()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\""),
+                summary
+                    .unchanged
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                summary
+                    .updated
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                summary
+                    .added
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                summary
+                    .removed
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(","),
             );
             to_cstring(&json)
         }
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -187,14 +235,20 @@ pub unsafe extern "C" fn csvdb_to_sqlite(
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("input is null".into());
+            return ptr::null_mut();
+        }
     };
     let output = unsafe { to_str(output) };
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
     match to_sqlite::to_sqlite(Path::new(input), output.map(Path::new), force != 0, &filter) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -217,14 +271,20 @@ pub unsafe extern "C" fn csvdb_to_duckdb(
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("input is null".into());
+            return ptr::null_mut();
+        }
     };
     let output = unsafe { to_str(output) };
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
     match to_duckdb::to_duckdb(Path::new(input), output.map(Path::new), force != 0, &filter) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -250,7 +310,10 @@ pub unsafe extern "C" fn csvdb_to_parquetdb(
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("input is null".into());
+            return ptr::null_mut();
+        }
     };
     let output = unsafe { to_str(output) };
     let order_mode = parse_order(unsafe { to_str(order) });
@@ -268,7 +331,10 @@ pub unsafe extern "C" fn csvdb_to_parquetdb(
         &filter,
     ) {
         Ok(path) => to_cstring(&path.to_string_lossy()),
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -289,13 +355,19 @@ pub unsafe extern "C" fn csvdb_checksum(
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("input is null".into());
+            return ptr::null_mut();
+        }
     };
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
     match checksum::checksum(Path::new(input), &filter) {
         Ok(hash) => to_cstring(&hash),
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -318,17 +390,32 @@ pub unsafe extern "C" fn csvdb_diff(
     clear_error();
     let left = match unsafe { to_str(left) } {
         Some(s) => s,
-        None => { set_error("left is null".into()); return -1; }
+        None => {
+            set_error("left is null".into());
+            return -1;
+        }
     };
     let right = match unsafe { to_str(right) } {
         Some(s) => s,
-        None => { set_error("right is null".into()); return -1; }
+        None => {
+            set_error("right is null".into());
+            return -1;
+        }
     };
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
 
     match diff::diff(Path::new(left), Path::new(right), summary != 0, &filter) {
-        Ok(has_diff) => if has_diff { 1 } else { 0 },
-        Err(e) => { set_error(format!("{e:#}")); -1 }
+        Ok(has_diff) => {
+            if has_diff {
+                1
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            -1
+        }
     }
 }
 
@@ -340,18 +427,28 @@ pub unsafe extern "C" fn csvdb_diff(
 ///
 /// `input` must be a valid NUL-terminated C string.
 #[no_mangle]
-pub unsafe extern "C" fn csvdb_validate(
-    input: *const c_char,
-) -> c_int {
+pub unsafe extern "C" fn csvdb_validate(input: *const c_char) -> c_int {
     clear_error();
     let input = match unsafe { to_str(input) } {
         Some(s) => s,
-        None => { set_error("input is null".into()); return -1; }
+        None => {
+            set_error("input is null".into());
+            return -1;
+        }
     };
 
     match validate::validate(Path::new(input)) {
-        Ok(result) => if result.errors.is_empty() { 0 } else { 1 },
-        Err(e) => { set_error(format!("{e:#}")); -1 }
+        Ok(result) => {
+            if result.errors.is_empty() {
+                0
+            } else {
+                1
+            }
+        }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            -1
+        }
     }
 }
 
@@ -364,18 +461,21 @@ pub unsafe extern "C" fn csvdb_validate(
 /// All pointer parameters must be valid NUL-terminated C strings.
 /// Caller must free the returned string with `csvdb_free_string`.
 #[no_mangle]
-pub unsafe extern "C" fn csvdb_sql(
-    path: *const c_char,
-    query: *const c_char,
-) -> *mut c_char {
+pub unsafe extern "C" fn csvdb_sql(path: *const c_char, query: *const c_char) -> *mut c_char {
     clear_error();
     let path = match unsafe { to_str(path) } {
         Some(s) => s,
-        None => { set_error("path is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("path is null".into());
+            return ptr::null_mut();
+        }
     };
     let query = match unsafe { to_str(query) } {
         Some(s) => s,
-        None => { set_error("query is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("query is null".into());
+            return ptr::null_mut();
+        }
     };
 
     match sql::sql_query(Path::new(path), query) {
@@ -394,12 +494,21 @@ pub unsafe extern "C" fn csvdb_sql(
             match wtr.into_inner() {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(s) => to_cstring(&s),
-                    Err(_) => { set_error("invalid UTF-8 in CSV output".into()); ptr::null_mut() }
+                    Err(_) => {
+                        set_error("invalid UTF-8 in CSV output".into());
+                        ptr::null_mut()
+                    }
                 },
-                Err(_) => { set_error("failed to flush CSV writer".into()); ptr::null_mut() }
+                Err(_) => {
+                    set_error("failed to flush CSV writer".into());
+                    ptr::null_mut()
+                }
             }
         }
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -425,7 +534,10 @@ pub unsafe extern "C" fn csvdb_init(
     clear_error();
     let source = match unsafe { to_str(source) } {
         Some(s) => s,
-        None => { set_error("source is null".into()); return ptr::null_mut(); }
+        None => {
+            set_error("source is null".into());
+            return ptr::null_mut();
+        }
     };
     let output = unsafe { to_str(output) };
     let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
@@ -435,9 +547,18 @@ pub unsafe extern "C" fn csvdb_init(
         detect_fk: detect_fk != 0,
         ..Default::default()
     };
-    match init::init_csvdb(Path::new(source), output.map(Path::new), force != 0, &filter, &config) {
+    match init::init_csvdb(
+        Path::new(source),
+        output.map(Path::new),
+        force != 0,
+        &filter,
+        &config,
+    ) {
         Ok(result) => to_cstring(&result.output_dir.to_string_lossy()),
-        Err(e) => { set_error(format!("{e:#}")); ptr::null_mut() }
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
     }
 }
 
@@ -457,11 +578,9 @@ pub extern "C" fn csvdb_version() -> *const c_char {
 /// Returns NULL if no error.
 #[no_mangle]
 pub extern "C" fn csvdb_last_error() -> *const c_char {
-    LAST_ERROR.with(|e| {
-        match e.borrow().as_ref() {
-            Some(c) => c.as_ptr(),
-            None => ptr::null(),
-        }
+    LAST_ERROR.with(|e| match e.borrow().as_ref() {
+        Some(c) => c.as_ptr(),
+        None => ptr::null(),
     })
 }
 

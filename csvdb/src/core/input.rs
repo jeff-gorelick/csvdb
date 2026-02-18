@@ -21,10 +21,7 @@ impl InputFormat {
     pub fn from_path(path: &Path) -> Result<Self> {
         // Check if it's a directory
         if path.is_dir() {
-            let dir_name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
             // Check extension-based detection first
             if dir_name.ends_with(".parquetdb") {
@@ -61,10 +58,7 @@ impl InputFormat {
         // Check if the path looks like a directory format but doesn't exist
         let path_str = path.to_string_lossy();
         if path_str.ends_with(".csvdb") || path_str.ends_with(".parquetdb") {
-            bail!(
-                "Path not found: {}",
-                path.display()
-            );
+            bail!("Path not found: {}", path.display());
         }
 
         // It's a file - check extension
@@ -111,19 +105,34 @@ mod tests {
 
     #[test]
     fn test_detect_sqlite() {
-        assert_eq!(InputFormat::from_path(Path::new("test.sqlite")).unwrap(), InputFormat::Sqlite);
-        assert_eq!(InputFormat::from_path(Path::new("test.sqlite3")).unwrap(), InputFormat::Sqlite);
-        assert_eq!(InputFormat::from_path(Path::new("test.db")).unwrap(), InputFormat::Sqlite);
+        assert_eq!(
+            InputFormat::from_path(Path::new("test.sqlite")).unwrap(),
+            InputFormat::Sqlite
+        );
+        assert_eq!(
+            InputFormat::from_path(Path::new("test.sqlite3")).unwrap(),
+            InputFormat::Sqlite
+        );
+        assert_eq!(
+            InputFormat::from_path(Path::new("test.db")).unwrap(),
+            InputFormat::Sqlite
+        );
     }
 
     #[test]
     fn test_detect_duckdb() {
-        assert_eq!(InputFormat::from_path(Path::new("test.duckdb")).unwrap(), InputFormat::DuckDb);
+        assert_eq!(
+            InputFormat::from_path(Path::new("test.duckdb")).unwrap(),
+            InputFormat::DuckDb
+        );
     }
 
     #[test]
     fn test_detect_parquet() {
-        assert_eq!(InputFormat::from_path(Path::new("test.parquet")).unwrap(), InputFormat::Parquet);
+        assert_eq!(
+            InputFormat::from_path(Path::new("test.parquet")).unwrap(),
+            InputFormat::Parquet
+        );
     }
 
     #[test]
@@ -212,7 +221,10 @@ mod tests {
         assert_eq!(InputFormat::Sqlite.default_output_extension(), "sqlite");
         assert_eq!(InputFormat::DuckDb.default_output_extension(), "duckdb");
         assert_eq!(InputFormat::Csvdb.default_output_extension(), "csvdb");
-        assert_eq!(InputFormat::Parquetdb.default_output_extension(), "parquetdb");
+        assert_eq!(
+            InputFormat::Parquetdb.default_output_extension(),
+            "parquetdb"
+        );
         assert_eq!(InputFormat::Parquet.default_output_extension(), "parquet");
     }
 
