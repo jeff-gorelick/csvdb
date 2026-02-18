@@ -754,7 +754,7 @@ cargo run -p csvdb -- checksum mydb.sqlite
 # Rust unit tests
 cargo test
 
-# Python functional tests (189 tests)
+# Python functional tests (270 tests)
 cd tests/functional
 uv run pytest
 
