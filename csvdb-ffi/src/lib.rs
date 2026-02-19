@@ -4,7 +4,7 @@ use std::path::Path;
 use std::ptr;
 
 use csvdb::commands::{
-    checksum, diff, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate,
+    checksum, diff, init, merge, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate,
 };
 use csvdb::{NullMode, OrderMode, TableFilter};
 
@@ -455,6 +455,87 @@ pub unsafe extern "C" fn csvdb_diff_json(
 
     match diff::diff_json(Path::new(left), Path::new(right), summary != 0, &filter) {
         Ok(json) => to_cstring(&json),
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Three-way merge of databases or csvdb directories.
+///
+/// Returns a JSON merge report string on success (caller must free with `csvdb_free_string`),
+/// or NULL on error. The merged output is written to the `output` directory.
+///
+/// `strategy` can be "normal", "ours", or "theirs" (NULL defaults to "normal").
+///
+/// # Safety
+///
+/// All pointer parameters must be valid NUL-terminated C strings or null.
+/// Caller must free the returned string with `csvdb_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn csvdb_merge(
+    base: *const c_char,
+    left: *const c_char,
+    right: *const c_char,
+    output: *const c_char,
+    force: c_int,
+    strategy: *const c_char,
+    tables: *const c_char,
+    exclude: *const c_char,
+) -> *mut c_char {
+    clear_error();
+    let base = match unsafe { to_str(base) } {
+        Some(s) => s,
+        None => {
+            set_error("base is null".into());
+            return ptr::null_mut();
+        }
+    };
+    let left = match unsafe { to_str(left) } {
+        Some(s) => s,
+        None => {
+            set_error("left is null".into());
+            return ptr::null_mut();
+        }
+    };
+    let right = match unsafe { to_str(right) } {
+        Some(s) => s,
+        None => {
+            set_error("right is null".into());
+            return ptr::null_mut();
+        }
+    };
+    let output = match unsafe { to_str(output) } {
+        Some(s) => s,
+        None => {
+            set_error("output is null".into());
+            return ptr::null_mut();
+        }
+    };
+    let strat = match unsafe { to_str(strategy) } {
+        Some("ours") => merge::MergeStrategy::Ours,
+        Some("theirs") => merge::MergeStrategy::Theirs,
+        _ => merge::MergeStrategy::Normal,
+    };
+    let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
+
+    match merge::merge(
+        Path::new(base),
+        Path::new(left),
+        Path::new(right),
+        Path::new(output),
+        strat,
+        force != 0,
+        &filter,
+    ) {
+        Ok(result) => match serde_json::to_string_pretty(&result) {
+            Ok(json) => to_cstring(&json),
+            Err(e) => {
+                set_error(format!("JSON serialization failed: {e}"));
+                ptr::null_mut()
+            }
+        },
         Err(e) => {
             set_error(format!("{e:#}"));
             ptr::null_mut()

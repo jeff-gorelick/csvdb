@@ -9,7 +9,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule};
 
 use csvdb::commands::{
-    checksum, diff, init, read, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, write,
+    checksum, diff, init, merge, read, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate,
+    write,
 };
 use csvdb::{NullMode, OrderMode, TableFilter};
 
@@ -656,6 +657,111 @@ fn py_sql_polars(py: Python<'_>, path: &str, query: &str) -> PyResult<PyObject> 
     arrow_to_polars(py, arrow)
 }
 
+/// Three-way merge of databases or csvdb directories.
+///
+/// Returns:
+///     Dict with merge report including "base", "left", "right", "has_conflicts", "tables"
+#[pyfunction]
+#[pyo3(name = "merge", signature = (base, left, right, output, *, strategy="normal", force=false, tables=vec![], exclude=vec![]))]
+fn merge_db(
+    py: Python<'_>,
+    base: &str,
+    left: &str,
+    right: &str,
+    output: &str,
+    strategy: &str,
+    force: bool,
+    tables: Vec<String>,
+    exclude: Vec<String>,
+) -> PyResult<PyObject> {
+    let strat = match strategy {
+        "normal" => merge::MergeStrategy::Normal,
+        "ours" => merge::MergeStrategy::Ours,
+        "theirs" => merge::MergeStrategy::Theirs,
+        _ => {
+            return Err(PyRuntimeError::new_err(format!(
+                "Unknown strategy: {strategy}. Use 'normal', 'ours', or 'theirs'"
+            )))
+        }
+    };
+    let filter = TableFilter::new(tables, exclude);
+
+    let result = merge::merge(
+        Path::new(base),
+        Path::new(left),
+        Path::new(right),
+        Path::new(output),
+        strat,
+        force,
+        &filter,
+    )
+    .map_err(to_py_err)?;
+
+    let dict = PyDict::new(py);
+    dict.set_item("base", &result.base)?;
+    dict.set_item("left", &result.left)?;
+    dict.set_item("right", &result.right)?;
+    dict.set_item("has_conflicts", result.has_conflicts)?;
+
+    let tables_list = PyList::empty(py);
+    for table in &result.tables {
+        let td = PyDict::new(py);
+        td.set_item("name", &table.name)?;
+        td.set_item(
+            "status",
+            match table.status {
+                merge::MergeTableStatus::Identical => "identical",
+                merge::MergeTableStatus::Merged => "merged",
+                merge::MergeTableStatus::Conflict => "conflict",
+                merge::MergeTableStatus::Added => "added",
+                merge::MergeTableStatus::Removed => "removed",
+            },
+        )?;
+        td.set_item("rows_merged", table.rows_merged)?;
+
+        let conflicts_list = PyList::empty(py);
+        for conflict in &table.conflicts {
+            let cd = PyDict::new(py);
+            let pk_dict = PyDict::new(py);
+            for (k, v) in &conflict.pk {
+                pk_dict.set_item(k, v)?;
+            }
+            cd.set_item("pk", pk_dict)?;
+            cd.set_item(
+                "kind",
+                match conflict.kind {
+                    merge::ConflictKind::ModifyModify => "modify_modify",
+                    merge::ConflictKind::ModifyDelete => "modify_delete",
+                    merge::ConflictKind::AddAdd => "add_add",
+                },
+            )?;
+
+            if let Some(cols) = &conflict.columns {
+                let cols_list = PyList::empty(py);
+                for col in cols {
+                    let col_dict = PyDict::new(py);
+                    col_dict.set_item("column", &col.column)?;
+                    col_dict.set_item("base", &col.base)?;
+                    col_dict.set_item("left", &col.left)?;
+                    col_dict.set_item("right", &col.right)?;
+                    cols_list.append(col_dict)?;
+                }
+                cd.set_item("columns", cols_list)?;
+            } else {
+                cd.set_item("columns", py.None())?;
+            }
+
+            conflicts_list.append(cd)?;
+        }
+        td.set_item("conflicts", conflicts_list)?;
+
+        tables_list.append(td)?;
+    }
+    dict.set_item("tables", tables_list)?;
+
+    Ok(dict.into())
+}
+
 /// Get the csvdb library version.
 #[pyfunction]
 fn version() -> &'static str {
@@ -673,6 +779,7 @@ fn csvdb_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(checksum_db, m)?)?;
     m.add_function(wrap_pyfunction!(diff_db, m)?)?;
     m.add_function(wrap_pyfunction!(diff_detail_py, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_db, m)?)?;
     m.add_function(wrap_pyfunction!(validate_db, m)?)?;
     m.add_function(wrap_pyfunction!(init_csvdb, m)?)?;
     m.add_function(wrap_pyfunction!(py_to_arrow, m)?)?;

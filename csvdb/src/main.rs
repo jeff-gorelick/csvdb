@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use csvdb::commands::{
-    checksum, diff, hooks, init, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate, watch,
+    checksum, diff, hooks, init, merge, sql, to_csv, to_duckdb, to_parquetdb, to_sqlite, validate,
+    watch,
 };
 use csvdb::{CsvdbConfig, InputFormat, NullMode, OrderMode, TableFilter};
 
@@ -20,6 +21,13 @@ enum SqlFormat {
 enum DiffFormat {
     Text,
     Json,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliMergeStrategy {
+    Normal,
+    Ours,
+    Theirs,
 }
 
 #[derive(Parser)]
@@ -233,6 +241,34 @@ enum Commands {
         exclude: Vec<String>,
     },
 
+    /// Three-way merge of databases or csvdb directories
+    Merge {
+        /// Base (common ancestor) path
+        base: PathBuf,
+        /// Left (ours) path
+        left: PathBuf,
+        /// Right (theirs) path
+        right: PathBuf,
+        /// Output directory for merged result
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Merge strategy
+        #[arg(long, value_enum, default_value_t = CliMergeStrategy::Normal)]
+        strategy: CliMergeStrategy,
+        /// Output format (default: text)
+        #[arg(long, value_enum)]
+        format: Option<DiffFormat>,
+        /// Overwrite existing output directory
+        #[arg(long)]
+        force: bool,
+        /// Only include these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "exclude")]
+        tables: Vec<String>,
+        /// Exclude these tables (comma-separated)
+        #[arg(long, value_delimiter = ',', conflicts_with = "tables")]
+        exclude: Vec<String>,
+    },
+
     /// Compute checksum of database or csvdb directory
     Checksum {
         /// Path to database (.sqlite, .duckdb) or .csvdb directory
@@ -435,6 +471,25 @@ fn main() -> ExitCode {
         } => {
             let filter = TableFilter::new(tables, exclude);
             run_diff(&left, &right, summary, format, &filter)
+        }
+        Commands::Merge {
+            base,
+            left,
+            right,
+            output,
+            strategy,
+            format,
+            force,
+            tables,
+            exclude,
+        } => {
+            let filter = TableFilter::new(tables, exclude);
+            let strat = match strategy {
+                CliMergeStrategy::Normal => merge::MergeStrategy::Normal,
+                CliMergeStrategy::Ours => merge::MergeStrategy::Ours,
+                CliMergeStrategy::Theirs => merge::MergeStrategy::Theirs,
+            };
+            run_merge(&base, &left, &right, &output, strat, format, force, &filter)
         }
         Commands::Checksum {
             path,
@@ -810,6 +865,37 @@ fn run_watch(
 ) -> Result<ExitCode> {
     watch::watch(path, target, order, null_mode, order_by, debounce, filter)?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_merge(
+    base: &Path,
+    left: &Path,
+    right: &Path,
+    output: &Path,
+    strategy: merge::MergeStrategy,
+    format: Option<DiffFormat>,
+    force: bool,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
+    let result = merge::merge(base, left, right, output, strategy, force, filter)?;
+
+    match format {
+        Some(DiffFormat::Json) => {
+            let json = serde_json::to_string_pretty(&result)?;
+            println!("{json}");
+        }
+        _ => {
+            merge::print_text_merge(&result);
+            println!();
+            println!("Created: {}", output.display());
+        }
+    }
+
+    if result.has_conflicts {
+        Ok(ExitCode::from(1))
+    } else {
+        Ok(ExitCode::SUCCESS)
+    }
 }
 
 fn run_hooks(action: HooksAction) -> Result<ExitCode> {

@@ -2,6 +2,7 @@ pub mod checksum;
 pub mod diff;
 pub mod hooks;
 pub mod init;
+pub mod merge;
 pub mod read;
 pub mod sql;
 pub mod to_csv;

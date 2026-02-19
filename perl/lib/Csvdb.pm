@@ -58,6 +58,7 @@ $ffi->attach(csvdb_diff_json   => ['string','string','int','string','string'] =>
 $ffi->attach(csvdb_validate    => ['string']                      => 'int');
 $ffi->attach(csvdb_sql         => ['string','string']             => 'opaque');
 $ffi->attach(csvdb_init        => ['string','string','int','string','string','int','int'] => 'opaque');
+$ffi->attach(csvdb_merge       => ['string','string','string','string','int','string','string','string'] => 'opaque');
 
 # Helper: read and free a returned string, or die with last error
 sub _read_string {
@@ -200,6 +201,19 @@ sub init {
     my $detect_pk = exists $args{detect_pk} ? ($args{detect_pk} ? 1 : 0) : 1;
     my $detect_fk = exists $args{detect_fk} ? ($args{detect_fk} ? 1 : 0) : 1;
     return _read_string(csvdb_init($source, $output, $force, $tables, $exclude, $detect_pk, $detect_fk));
+}
+
+sub merge {
+    my (%args) = @_;
+    my $base     = $args{base}     // croak "base is required";
+    my $left     = $args{left}     // croak "left is required";
+    my $right    = $args{right}    // croak "right is required";
+    my $output   = $args{output}   // croak "output is required";
+    my $force    = $args{force}    ? 1 : 0;
+    my $strategy = $args{strategy} // undef;
+    my $tables   = $args{tables}   // undef;
+    my $exclude  = $args{exclude}  // undef;
+    return _read_string(csvdb_merge($base, $left, $right, $output, $force, $strategy, $tables, $exclude));
 }
 
 1;
@@ -374,6 +388,22 @@ Validates a .csvdb or .parquetdb directory. Returns 0 if valid, 1 if errors foun
     );
 
 Runs a read-only SQL query against any supported format. Returns results as CSV text.
+
+=head2 merge
+
+    my $json = Csvdb::merge(
+        base     => $base_path,     # required
+        left     => $left_path,     # required
+        right    => $right_path,    # required
+        output   => $output_dir,    # required
+        force    => 0,
+        strategy => "normal",       # "normal", "ours", or "theirs"
+        tables   => undef,
+        exclude  => undef,
+    );
+
+Three-way merge of databases. Returns a JSON string with merge report including
+conflict information. The merged result is written to the output directory.
 
 =head2 init
 

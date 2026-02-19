@@ -67,7 +67,7 @@ pub struct ColumnChange {
 
 /// Load tables from any supported format.
 /// Returns (Schema, map of table_name -> Table).
-fn load_tables(path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
+pub(crate) fn load_tables(path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
     let format = InputFormat::from_path(path)?;
 
     match format {
@@ -96,7 +96,7 @@ fn load_csvdb(csvdb_dir: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
 
 /// Rebuild pk_values from actual PK columns in the schema.
 /// This ensures tables loaded from different formats use the actual PK.
-fn rebuild_pk_from_schema(table: &mut Table, schema: &Schema) {
+pub(crate) fn rebuild_pk_from_schema(table: &mut Table, schema: &Schema) {
     if let Some(table_schema) = schema.tables.get(&table.name) {
         if !table_schema.pk_columns.is_empty() {
             let pk_indices: Vec<usize> = table_schema
@@ -252,7 +252,7 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
 }
 
 /// Parse a PK key string into a BTreeMap of column_name -> value.
-fn pk_to_map(pk_key: &str, pk_col_names: &[String]) -> BTreeMap<String, String> {
+pub(crate) fn pk_to_map(pk_key: &str, pk_col_names: &[String]) -> BTreeMap<String, String> {
     let pk_parts: Vec<&str> = pk_key.split('\x00').collect();
     pk_parts
         .iter()
