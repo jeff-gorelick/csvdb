@@ -37,7 +37,7 @@ unless ($lib) {
 local $ENV{CSVDB_FFI_LIB} = $lib;
 require Csvdb;
 
-plan tests => 27;
+plan tests => 30;
 
 # Helper: create a sample .csvdb directory
 sub make_csvdb {
@@ -195,3 +195,46 @@ print $fh2 "id,name\n1,Foo\n2,Bar\n";
 close $fh2;
 my $init_nopk = Csvdb::init(source => $raw_dir2, force => 1, detect_pk => 0);
 ok(defined $init_nopk && length($init_nopk) > 0, "init with detect_pk=0 returns output path");
+
+# --- Test merge ---
+# Create base, left (modified), right (same as base) csvdb dirs
+my $merge_tmpdir = tempdir(CLEANUP => 1);
+
+my $merge_base = File::Spec->catdir($merge_tmpdir, "base.csvdb");
+mkdir $merge_base;
+open my $ms1, '>', File::Spec->catfile($merge_base, 'schema.sql') or die $!;
+print $ms1 qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
+close $ms1;
+open my $mc1, '>', File::Spec->catfile($merge_base, 'users.csv') or die $!;
+print $mc1 "id,name\n1,Alice\n2,Bob\n";
+close $mc1;
+
+my $merge_left = File::Spec->catdir($merge_tmpdir, "left.csvdb");
+mkdir $merge_left;
+open my $ms2, '>', File::Spec->catfile($merge_left, 'schema.sql') or die $!;
+print $ms2 qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
+close $ms2;
+open my $mc2, '>', File::Spec->catfile($merge_left, 'users.csv') or die $!;
+print $mc2 "id,name\n1,Alicia\n2,Bob\n";
+close $mc2;
+
+my $merge_right = File::Spec->catdir($merge_tmpdir, "right.csvdb");
+mkdir $merge_right;
+open my $ms3, '>', File::Spec->catfile($merge_right, 'schema.sql') or die $!;
+print $ms3 qq{CREATE TABLE "users" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT NOT NULL\n);\n};
+close $ms3;
+open my $mc3, '>', File::Spec->catfile($merge_right, 'users.csv') or die $!;
+print $mc3 "id,name\n1,Alice\n2,Bob\n";
+close $mc3;
+
+my $merge_output = File::Spec->catdir($merge_tmpdir, "merged.csvdb");
+my $merge_json = Csvdb::merge(
+    base   => $merge_base,
+    left   => $merge_left,
+    right  => $merge_right,
+    output => $merge_output,
+    force  => 1,
+);
+ok(defined $merge_json && length($merge_json) > 0, "merge returns JSON report");
+like($merge_json, qr/"has_conflicts":\s*false/, "merge has no conflicts");
+ok(-d $merge_output, "merge creates output directory");

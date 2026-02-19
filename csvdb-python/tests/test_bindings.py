@@ -423,6 +423,82 @@ class TestChecksumExclude:
         assert full_hash != partial_hash
 
 
+class TestMerge:
+    def _make_csvdb(self, temp_dir, name, schema_sql, csvs):
+        """Create a minimal csvdb directory."""
+        csvdb_dir = temp_dir / name
+        csvdb_dir.mkdir()
+        (csvdb_dir / "schema.sql").write_text(schema_sql)
+        for table_name, content in csvs:
+            (csvdb_dir / f"{table_name}.csv").write_text(content)
+        return csvdb_dir
+
+    def test_merge_identical(self, temp_dir):
+        schema = 'CREATE TABLE "t" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT\n);\n'
+        csv = "id,name\n1,Alice\n2,Bob\n"
+        base = self._make_csvdb(temp_dir, "base.csvdb", schema, [("t", csv)])
+        left = self._make_csvdb(temp_dir, "left.csvdb", schema, [("t", csv)])
+        right = self._make_csvdb(temp_dir, "right.csvdb", schema, [("t", csv)])
+        output = str(temp_dir / "merged.csvdb")
+
+        result = csvdb.merge(str(base), str(left), str(right), output, force=True)
+        assert result["has_conflicts"] is False
+        assert result["tables"][0]["status"] == "identical"
+
+    def test_merge_left_modify(self, temp_dir):
+        schema = 'CREATE TABLE "t" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT\n);\n'
+        base = self._make_csvdb(temp_dir, "base.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        left = self._make_csvdb(temp_dir, "left.csvdb", schema, [("t", "id,name\n1,Alicia\n")])
+        right = self._make_csvdb(temp_dir, "right.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        output = str(temp_dir / "merged.csvdb")
+
+        result = csvdb.merge(str(base), str(left), str(right), output, force=True)
+        assert result["has_conflicts"] is False
+        assert result["tables"][0]["status"] == "merged"
+
+    def test_merge_conflict(self, temp_dir):
+        schema = 'CREATE TABLE "t" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT\n);\n'
+        base = self._make_csvdb(temp_dir, "base.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        left = self._make_csvdb(temp_dir, "left.csvdb", schema, [("t", "id,name\n1,Alicia\n")])
+        right = self._make_csvdb(temp_dir, "right.csvdb", schema, [("t", "id,name\n1,Ally\n")])
+        output = str(temp_dir / "merged.csvdb")
+
+        result = csvdb.merge(str(base), str(left), str(right), output, force=True)
+        assert result["has_conflicts"] is True
+        assert result["tables"][0]["status"] == "conflict"
+        assert len(result["tables"][0]["conflicts"]) == 1
+
+    def test_merge_strategy_ours(self, temp_dir):
+        schema = 'CREATE TABLE "t" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT\n);\n'
+        base = self._make_csvdb(temp_dir, "base.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        left = self._make_csvdb(temp_dir, "left.csvdb", schema, [("t", "id,name\n1,Alicia\n")])
+        right = self._make_csvdb(temp_dir, "right.csvdb", schema, [("t", "id,name\n1,Ally\n")])
+        output = str(temp_dir / "merged.csvdb")
+
+        result = csvdb.merge(str(base), str(left), str(right), output, strategy="ours", force=True)
+        assert result["has_conflicts"] is False
+
+    def test_merge_strategy_theirs(self, temp_dir):
+        schema = 'CREATE TABLE "t" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT\n);\n'
+        base = self._make_csvdb(temp_dir, "base.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        left = self._make_csvdb(temp_dir, "left.csvdb", schema, [("t", "id,name\n1,Alicia\n")])
+        right = self._make_csvdb(temp_dir, "right.csvdb", schema, [("t", "id,name\n1,Ally\n")])
+        output = str(temp_dir / "merged.csvdb")
+
+        result = csvdb.merge(str(base), str(left), str(right), output, strategy="theirs", force=True)
+        assert result["has_conflicts"] is False
+
+    def test_merge_bad_strategy(self, temp_dir):
+        schema = 'CREATE TABLE "t" (\n    "id" INTEGER PRIMARY KEY,\n    "name" TEXT\n);\n'
+        base = self._make_csvdb(temp_dir, "base.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        left = self._make_csvdb(temp_dir, "left.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        right = self._make_csvdb(temp_dir, "right.csvdb", schema, [("t", "id,name\n1,Alice\n")])
+        output = str(temp_dir / "merged.csvdb")
+
+        with pytest.raises(RuntimeError, match="Unknown strategy"):
+            csvdb.merge(str(base), str(left), str(right), output, strategy="invalid", force=True)
+
+
 class TestErrorHandling:
     def test_bad_path(self):
         with pytest.raises(RuntimeError):
