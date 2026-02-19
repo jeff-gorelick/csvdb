@@ -54,6 +54,7 @@ $ffi->attach(csvdb_to_duckdb   => ['string','string','int','string','string']   
 $ffi->attach(csvdb_to_parquetdb=> ['string','string','string','string','int','string','string','string'] => 'opaque');
 $ffi->attach(csvdb_checksum    => ['string','string','string']    => 'opaque');
 $ffi->attach(csvdb_diff        => ['string','string','int','string','string'] => 'int');
+$ffi->attach(csvdb_diff_json   => ['string','string','int','string','string'] => 'opaque');
 $ffi->attach(csvdb_validate    => ['string']                      => 'int');
 $ffi->attach(csvdb_sql         => ['string','string']             => 'opaque');
 $ffi->attach(csvdb_init        => ['string','string','int','string','string','int','int'] => 'opaque');
@@ -159,6 +160,16 @@ sub diff {
         croak "csvdb error: $err";
     }
     return $rc;
+}
+
+sub diff_json {
+    my (%args) = @_;
+    my $left    = $args{left}    // croak "left is required";
+    my $right   = $args{right}   // croak "right is required";
+    my $summary = $args{summary} ? 1 : 0;
+    my $tables  = $args{tables}  // undef;
+    my $exclude = $args{exclude} // undef;
+    return _read_string(csvdb_diff_json($left, $right, $summary, $tables, $exclude));
 }
 
 sub validate {
@@ -335,6 +346,19 @@ the same hash).
     );
 
 Compares two databases. Returns 0 if identical, 1 if differences found.
+
+=head2 diff_json
+
+    my $json = Csvdb::diff_json(
+        left    => $left_path,    # required
+        right   => $right_path,   # required
+        summary => 0,
+        tables  => undef,
+        exclude => undef,
+    );
+
+Compares two databases and returns the result as a JSON string with detailed
+diff information including table-level and row-level changes.
 
 =head2 validate
 

@@ -419,6 +419,49 @@ pub unsafe extern "C" fn csvdb_diff(
     }
 }
 
+/// Compare two databases or .csvdb directories and return structured JSON.
+///
+/// Returns a JSON string on success (caller must free with `csvdb_free_string`),
+/// or NULL on error (call `csvdb_last_error` for details).
+///
+/// # Safety
+///
+/// All pointer parameters must be valid NUL-terminated C strings or null.
+/// Caller must free the returned string with `csvdb_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn csvdb_diff_json(
+    left: *const c_char,
+    right: *const c_char,
+    summary: c_int,
+    tables: *const c_char,
+    exclude: *const c_char,
+) -> *mut c_char {
+    clear_error();
+    let left = match unsafe { to_str(left) } {
+        Some(s) => s,
+        None => {
+            set_error("left is null".into());
+            return ptr::null_mut();
+        }
+    };
+    let right = match unsafe { to_str(right) } {
+        Some(s) => s,
+        None => {
+            set_error("right is null".into());
+            return ptr::null_mut();
+        }
+    };
+    let filter = parse_filter(unsafe { to_str(tables) }, unsafe { to_str(exclude) });
+
+    match diff::diff_json(Path::new(left), Path::new(right), summary != 0, &filter) {
+        Ok(json) => to_cstring(&json),
+        Err(e) => {
+            set_error(format!("{e:#}"));
+            ptr::null_mut()
+        }
+    }
+}
+
 /// Validate a .csvdb or .parquetdb directory.
 ///
 /// Returns 0 if valid, 1 if errors found, -1 on error.
