@@ -319,6 +319,98 @@ fn diff_db(
     diff::diff(Path::new(left), Path::new(right), summary, &filter).map_err(to_py_err)
 }
 
+/// Compare two databases or .csvdb directories with detailed results.
+///
+/// Returns:
+///     Dict with "left", "right", "has_differences", and "tables" (list of table diffs)
+#[pyfunction]
+#[pyo3(name = "diff_detail", signature = (left, right, *, summary=false, tables=vec![], exclude=vec![]))]
+fn diff_detail_py(
+    py: Python<'_>,
+    left: &str,
+    right: &str,
+    summary: bool,
+    tables: Vec<String>,
+    exclude: Vec<String>,
+) -> PyResult<PyObject> {
+    let filter = TableFilter::new(tables, exclude);
+    let result =
+        diff::diff_detail(Path::new(left), Path::new(right), summary, &filter).map_err(to_py_err)?;
+
+    let dict = PyDict::new(py);
+    dict.set_item("left", &result.left)?;
+    dict.set_item("right", &result.right)?;
+    dict.set_item("has_differences", result.has_differences)?;
+
+    let tables_list = PyList::empty(py);
+    for table in &result.tables {
+        let td = PyDict::new(py);
+        td.set_item("name", &table.name)?;
+        td.set_item(
+            "status",
+            match table.status {
+                diff::TableStatus::Identical => "identical",
+                diff::TableStatus::Modified => "modified",
+                diff::TableStatus::Added => "added",
+                diff::TableStatus::Removed => "removed",
+            },
+        )?;
+
+        if let Some(rows) = &table.rows {
+            let rd = PyDict::new(py);
+            rd.set_item("total_left", rows.total_left)?;
+            rd.set_item("total_right", rows.total_right)?;
+            rd.set_item("added", rows.added)?;
+            rd.set_item("deleted", rows.deleted)?;
+            rd.set_item("modified", rows.modified)?;
+            td.set_item("rows", rd)?;
+        } else {
+            td.set_item("rows", py.None())?;
+        }
+
+        let changes_list = PyList::empty(py);
+        for change in &table.changes {
+            let cd = PyDict::new(py);
+            cd.set_item(
+                "kind",
+                match change.kind {
+                    diff::ChangeKind::Added => "added",
+                    diff::ChangeKind::Deleted => "deleted",
+                    diff::ChangeKind::Modified => "modified",
+                },
+            )?;
+
+            let pk_dict = PyDict::new(py);
+            for (k, v) in &change.pk {
+                pk_dict.set_item(k, v)?;
+            }
+            cd.set_item("pk", pk_dict)?;
+
+            if let Some(cols) = &change.columns {
+                let cols_list = PyList::empty(py);
+                for col in cols {
+                    let col_dict = PyDict::new(py);
+                    col_dict.set_item("column", &col.column)?;
+                    col_dict.set_item("left", &col.left)?;
+                    col_dict.set_item("right", &col.right)?;
+                    cols_list.append(col_dict)?;
+                }
+                cd.set_item("columns", cols_list)?;
+            } else {
+                cd.set_item("columns", py.None())?;
+            }
+
+            changes_list.append(cd)?;
+        }
+        td.set_item("changes", changes_list)?;
+
+        tables_list.append(td)?;
+    }
+    dict.set_item("tables", tables_list)?;
+
+    Ok(dict.into())
+}
+
 /// Validate a .csvdb or .parquetdb directory.
 ///
 /// Returns:
@@ -580,6 +672,7 @@ fn csvdb_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sql_query, m)?)?;
     m.add_function(wrap_pyfunction!(checksum_db, m)?)?;
     m.add_function(wrap_pyfunction!(diff_db, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_detail_py, m)?)?;
     m.add_function(wrap_pyfunction!(validate_db, m)?)?;
     m.add_function(wrap_pyfunction!(init_csvdb, m)?)?;
     m.add_function(wrap_pyfunction!(py_to_arrow, m)?)?;

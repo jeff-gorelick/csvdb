@@ -679,6 +679,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "toml",
@@ -691,6 +692,7 @@ dependencies = [
  "csv",
  "csvdb",
  "rusqlite",
+ "serde_json",
  "tempfile",
 ]
 

@@ -172,6 +172,79 @@ class TestDiff:
         assert result is True  # has differences
 
 
+class TestDiffDetail:
+    def test_identical(self, sample_csvdb):
+        result = csvdb.diff_detail(str(sample_csvdb), str(sample_csvdb))
+        assert result["has_differences"] is False
+        assert len(result["tables"]) > 0
+        assert result["tables"][0]["status"] == "identical"
+
+    def test_different(self, temp_dir):
+        dir1 = temp_dir / "a.csvdb"
+        dir1.mkdir()
+        (dir1 / "schema.sql").write_text('CREATE TABLE "t" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n')
+        (dir1 / "t.csv").write_text("id,v\n1,hello\n")
+
+        dir2 = temp_dir / "b.csvdb"
+        dir2.mkdir()
+        (dir2 / "schema.sql").write_text('CREATE TABLE "t" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n')
+        (dir2 / "t.csv").write_text("id,v\n1,world\n2,new\n")
+
+        result = csvdb.diff_detail(str(dir1), str(dir2))
+        assert result["has_differences"] is True
+        table = result["tables"][0]
+        assert table["status"] == "modified"
+        assert table["rows"]["added"] == 1
+        assert table["rows"]["modified"] == 1
+        assert len(table["changes"]) == 2
+        # Check modified change has column details
+        mod_change = [c for c in table["changes"] if c["kind"] == "modified"][0]
+        assert mod_change["pk"]["id"] == "1"
+        assert len(mod_change["columns"]) == 1
+        assert mod_change["columns"][0]["column"] == "v"
+        assert mod_change["columns"][0]["left"] == "hello"
+        assert mod_change["columns"][0]["right"] == "world"
+
+    def test_summary_no_changes(self, temp_dir):
+        dir1 = temp_dir / "a.csvdb"
+        dir1.mkdir()
+        (dir1 / "schema.sql").write_text('CREATE TABLE "t" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n')
+        (dir1 / "t.csv").write_text("id,v\n1,hello\n")
+
+        dir2 = temp_dir / "b.csvdb"
+        dir2.mkdir()
+        (dir2 / "schema.sql").write_text('CREATE TABLE "t" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n')
+        (dir2 / "t.csv").write_text("id,v\n1,world\n")
+
+        result = csvdb.diff_detail(str(dir1), str(dir2), summary=True)
+        assert result["has_differences"] is True
+        table = result["tables"][0]
+        assert table["rows"]["modified"] == 1
+        assert len(table["changes"]) == 0
+
+    def test_added_table(self, temp_dir):
+        dir1 = temp_dir / "a.csvdb"
+        dir1.mkdir()
+        (dir1 / "schema.sql").write_text('CREATE TABLE "t" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n')
+        (dir1 / "t.csv").write_text("id,v\n1,hello\n")
+
+        dir2 = temp_dir / "b.csvdb"
+        dir2.mkdir()
+        (dir2 / "schema.sql").write_text(
+            'CREATE TABLE "t" ("id" INTEGER PRIMARY KEY, "v" TEXT);\n'
+            'CREATE TABLE "t2" ("id" INTEGER PRIMARY KEY, "w" TEXT);\n'
+        )
+        (dir2 / "t.csv").write_text("id,v\n1,hello\n")
+        (dir2 / "t2.csv").write_text("id,w\n1,x\n")
+
+        result = csvdb.diff_detail(str(dir1), str(dir2))
+        assert result["has_differences"] is True
+        added = [t for t in result["tables"] if t["status"] == "added"]
+        assert len(added) == 1
+        assert added[0]["name"] == "t2"
+        assert added[0]["rows"] is None
+
+
 class TestValidate:
     def test_valid(self, sample_csvdb):
         result = csvdb.validate(str(sample_csvdb))

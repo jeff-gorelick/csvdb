@@ -7,6 +7,64 @@ use crate::core::csv::{find_table_file, read_table_csv_auto};
 use crate::core::{InputFormat, Schema, Table};
 use crate::{NullMode, OrderMode, TableFilter};
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiffResult {
+    pub left: String,
+    pub right: String,
+    pub has_differences: bool,
+    pub tables: Vec<TableDiff>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TableDiff {
+    pub name: String,
+    pub status: TableStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<RowCounts>,
+    pub changes: Vec<RowChange>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableStatus {
+    Identical,
+    Modified,
+    Added,
+    Removed,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RowCounts {
+    pub total_left: usize,
+    pub total_right: usize,
+    pub added: usize,
+    pub deleted: usize,
+    pub modified: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RowChange {
+    pub kind: ChangeKind,
+    pub pk: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<ColumnChange>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    Added,
+    Deleted,
+    Modified,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ColumnChange {
+    pub column: String,
+    pub left: String,
+    pub right: String,
+}
+
 /// Load tables from any supported format.
 /// Returns (Schema, map of table_name -> Table).
 fn load_tables(path: &Path) -> Result<(Schema, BTreeMap<String, Table>)> {
@@ -193,27 +251,36 @@ fn load_parquet(parquet_path: &Path) -> Result<(Schema, BTreeMap<String, Table>)
     Ok((schema, tables))
 }
 
-/// Compare two sources and print differences.
-/// Returns true if there are any differences.
-pub fn diff(
+/// Parse a PK key string into a BTreeMap of column_name -> value.
+fn pk_to_map(pk_key: &str, pk_col_names: &[String]) -> BTreeMap<String, String> {
+    let pk_parts: Vec<&str> = pk_key.split('\x00').collect();
+    pk_parts
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let col = pk_col_names
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| "?".to_string());
+            (col, v.to_string())
+        })
+        .collect()
+}
+
+/// Collect detailed diff data without printing anything.
+pub fn diff_detail(
     left_path: &Path,
     right_path: &Path,
     summary: bool,
     filter: &TableFilter,
-) -> Result<bool> {
+) -> Result<DiffResult> {
     let (left_schema, left_tables) = load_tables(left_path)
         .with_context(|| format!("Failed to load left: {}", left_path.display()))?;
     let (right_schema, right_tables) = load_tables(right_path)
         .with_context(|| format!("Failed to load right: {}", right_path.display()))?;
 
-    println!(
-        "Comparing {} \u{2194} {}",
-        left_path.display(),
-        right_path.display()
-    );
-    println!();
-
     let mut has_differences = false;
+    let mut table_diffs = Vec::new();
 
     // Collect all table names from both sides
     let mut all_tables: Vec<String> = left_schema
@@ -231,14 +298,24 @@ pub fn diff(
         let in_right = right_tables.contains_key(table_name);
 
         if in_left && !in_right {
-            println!("{table_name}: removed table");
             has_differences = true;
+            table_diffs.push(TableDiff {
+                name: table_name.clone(),
+                status: TableStatus::Removed,
+                rows: None,
+                changes: vec![],
+            });
             continue;
         }
 
         if !in_left && in_right {
-            println!("{table_name}: added table");
             has_differences = true;
+            table_diffs.push(TableDiff {
+                name: table_name.clone(),
+                status: TableStatus::Added,
+                rows: None,
+                changes: vec![],
+            });
             continue;
         }
 
@@ -259,7 +336,6 @@ pub fn diff(
                 None => deleted.push(pk.clone()),
                 Some(right_row) => {
                     if left_row.content_hash() != right_row.content_hash() {
-                        // Compare with normalized values to ignore float formatting differences
                         let values_differ = left_row
                             .values
                             .iter()
@@ -281,114 +357,186 @@ pub fn diff(
         }
 
         if added.is_empty() && deleted.is_empty() && modified.is_empty() {
-            println!("{}: identical ({} rows)", table_name, left_table.rows.len());
+            table_diffs.push(TableDiff {
+                name: table_name.clone(),
+                status: TableStatus::Identical,
+                rows: Some(RowCounts {
+                    total_left: left_table.rows.len(),
+                    total_right: right_table.rows.len(),
+                    added: 0,
+                    deleted: 0,
+                    modified: 0,
+                }),
+                changes: vec![],
+            });
             continue;
         }
 
         has_differences = true;
 
-        // Summary line
-        let mut parts = Vec::new();
-        if !added.is_empty() {
-            parts.push(format!("{} added", added.len()));
-        }
-        if !deleted.is_empty() {
-            parts.push(format!("{} deleted", deleted.len()));
-        }
-        if !modified.is_empty() {
-            parts.push(format!("{} modified", modified.len()));
-        }
-        println!("{}: {}", table_name, parts.join(", "));
+        let mut changes = Vec::new();
 
-        if summary {
-            continue;
-        }
+        if !summary {
+            // Collect added row changes
+            for pk in &added {
+                changes.push(RowChange {
+                    kind: ChangeKind::Added,
+                    pk: pk_to_map(pk, &right_table.pk_columns),
+                    columns: None,
+                });
+            }
 
-        // Detailed output
-        let pk_display = |pk_key: &str| -> String {
-            let pk_parts: Vec<&str> = pk_key.split('\x00').collect();
-            let pk_col_names = &left_table.pk_columns;
-            pk_parts
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    let col = pk_col_names.get(i).map(|s| s.as_str()).unwrap_or("?");
-                    format!("{col}={v}")
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
+            // Collect deleted row changes
+            for pk in &deleted {
+                changes.push(RowChange {
+                    kind: ChangeKind::Deleted,
+                    pk: pk_to_map(pk, &left_table.pk_columns),
+                    columns: None,
+                });
+            }
 
-        // Show added rows
-        for pk in &added {
-            let row = right_by_pk[pk];
-            let values: Vec<String> = row
-                .values
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| {
-                    right_table.pk_columns.iter().all(|pk_col| {
-                        right_table
+            // Collect modified row changes with column-level diffs
+            for pk in &modified {
+                let left_row = left_by_pk[pk];
+                let right_row = right_by_pk[pk];
+
+                let col_changes: Vec<ColumnChange> = left_row
+                    .values
+                    .iter()
+                    .zip(right_row.values.iter())
+                    .enumerate()
+                    .filter(|(_, (lv, rv))| normalize_value(lv) != normalize_value(rv))
+                    .map(|(i, (lv, rv))| ColumnChange {
+                        column: left_table
                             .columns
-                            .get(*i)
-                            .map(|c| c != pk_col)
-                            .unwrap_or(true)
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| "?".to_string()),
+                        left: lv.clone(),
+                        right: rv.clone(),
                     })
-                })
-                .map(|(_, v)| v.clone())
-                .collect();
-            println!("  + ({}) {}", pk_display(pk), values.join(", "));
-        }
+                    .collect();
 
-        // Show deleted rows
-        for pk in &deleted {
-            let row = left_by_pk[pk];
-            let values: Vec<String> = row
-                .values
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| {
-                    left_table.pk_columns.iter().all(|pk_col| {
-                        left_table
-                            .columns
-                            .get(*i)
-                            .map(|c| c != pk_col)
-                            .unwrap_or(true)
-                    })
-                })
-                .map(|(_, v)| v.clone())
-                .collect();
-            println!("  - ({}) {}", pk_display(pk), values.join(", "));
-        }
-
-        // Show modified rows (column-level diff)
-        for pk in &modified {
-            let left_row = left_by_pk[pk];
-            let right_row = right_by_pk[pk];
-
-            for (i, (lv, rv)) in left_row
-                .values
-                .iter()
-                .zip(right_row.values.iter())
-                .enumerate()
-            {
-                if normalize_value(lv) != normalize_value(rv) {
-                    let col_name = left_table.columns.get(i).map(|s| s.as_str()).unwrap_or("?");
-                    println!(
-                        "  ~ ({}) {}: \"{}\" \u{2192} \"{}\"",
-                        pk_display(pk),
-                        col_name,
-                        lv,
-                        rv
-                    );
-                }
+                changes.push(RowChange {
+                    kind: ChangeKind::Modified,
+                    pk: pk_to_map(pk, &left_table.pk_columns),
+                    columns: Some(col_changes),
+                });
             }
         }
 
-        println!();
+        table_diffs.push(TableDiff {
+            name: table_name.clone(),
+            status: TableStatus::Modified,
+            rows: Some(RowCounts {
+                total_left: left_table.rows.len(),
+                total_right: right_table.rows.len(),
+                added: added.len(),
+                deleted: deleted.len(),
+                modified: modified.len(),
+            }),
+            changes,
+        });
     }
 
-    Ok(has_differences)
+    Ok(DiffResult {
+        left: left_path.display().to_string(),
+        right: right_path.display().to_string(),
+        has_differences,
+        tables: table_diffs,
+    })
+}
+
+/// Print a DiffResult in human-readable text format.
+fn print_text_diff(result: &DiffResult, summary: bool) {
+    println!("Comparing {} \u{2194} {}", result.left, result.right);
+    println!();
+
+    for table in &result.tables {
+        match table.status {
+            TableStatus::Removed => {
+                println!("{}: removed table", table.name);
+            }
+            TableStatus::Added => {
+                println!("{}: added table", table.name);
+            }
+            TableStatus::Identical => {
+                if let Some(rows) = &table.rows {
+                    println!("{}: identical ({} rows)", table.name, rows.total_left);
+                }
+            }
+            TableStatus::Modified => {
+                if let Some(rows) = &table.rows {
+                    let mut parts = Vec::new();
+                    if rows.added > 0 {
+                        parts.push(format!("{} added", rows.added));
+                    }
+                    if rows.deleted > 0 {
+                        parts.push(format!("{} deleted", rows.deleted));
+                    }
+                    if rows.modified > 0 {
+                        parts.push(format!("{} modified", rows.modified));
+                    }
+                    println!("{}: {}", table.name, parts.join(", "));
+                }
+
+                if !summary {
+                    for change in &table.changes {
+                        let pk_display: String = change
+                            .pk
+                            .iter()
+                            .map(|(k, v)| format!("{k}={v}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+
+                        match change.kind {
+                            ChangeKind::Added => {
+                                println!("  + ({})", pk_display);
+                            }
+                            ChangeKind::Deleted => {
+                                println!("  - ({})", pk_display);
+                            }
+                            ChangeKind::Modified => {
+                                if let Some(cols) = &change.columns {
+                                    for col in cols {
+                                        println!(
+                                            "  ~ ({}) {}: \"{}\" \u{2192} \"{}\"",
+                                            pk_display, col.column, col.left, col.right
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+    }
+}
+
+/// Compare two sources and print differences.
+/// Returns true if there are any differences.
+pub fn diff(
+    left_path: &Path,
+    right_path: &Path,
+    summary: bool,
+    filter: &TableFilter,
+) -> Result<bool> {
+    let result = diff_detail(left_path, right_path, summary, filter)?;
+    print_text_diff(&result, summary);
+    Ok(result.has_differences)
+}
+
+/// Compare two sources and return the result as a JSON string.
+pub fn diff_json(
+    left_path: &Path,
+    right_path: &Path,
+    summary: bool,
+    filter: &TableFilter,
+) -> Result<String> {
+    let result = diff_detail(left_path, right_path, summary, filter)?;
+    serde_json::to_string_pretty(&result).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -754,6 +902,171 @@ mod tests {
 
         let has_diff = diff(&pdb1, &pdb2, false, &no_filter)?;
         assert!(!has_diff);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_detail_identical() -> Result<()> {
+        let dir = tempdir()?;
+        let csv = "id,name\n1,Alice\n2,Bob\n";
+        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", csv)]);
+        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", csv)]);
+
+        let result = diff_detail(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(!result.has_differences);
+        assert_eq!(result.tables.len(), 1);
+        assert!(matches!(result.tables[0].status, TableStatus::Identical));
+        assert_eq!(result.tables[0].rows.as_ref().unwrap().total_left, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_detail_modified() -> Result<()> {
+        let dir = tempdir()?;
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n2,Bob\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alicia\n3,Charlie\n")],
+        );
+
+        let result = diff_detail(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(result.has_differences);
+        assert_eq!(result.tables.len(), 1);
+        assert!(matches!(result.tables[0].status, TableStatus::Modified));
+        let rows = result.tables[0].rows.as_ref().unwrap();
+        assert_eq!(rows.added, 1);
+        assert_eq!(rows.deleted, 1);
+        assert_eq!(rows.modified, 1);
+        assert_eq!(result.tables[0].changes.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_detail_added_table() -> Result<()> {
+        let dir = tempdir()?;
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+
+        let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
+                        CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            schema2,
+            &[("t", "id,name\n1,Alice\n"), ("t2", "id,val\n1,x\n")],
+        );
+
+        let result = diff_detail(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(result.has_differences);
+        let added_table = result.tables.iter().find(|t| t.name == "t2").unwrap();
+        assert!(matches!(added_table.status, TableStatus::Added));
+        assert!(added_table.rows.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_detail_removed_table() -> Result<()> {
+        let dir = tempdir()?;
+        let schema2 = "CREATE TABLE \"t\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"name\" TEXT\n);\n\
+                        CREATE TABLE \"t2\" (\n    \"id\" INTEGER PRIMARY KEY,\n    \"val\" TEXT\n);\n";
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            schema2,
+            &[("t", "id,name\n1,Alice\n"), ("t2", "id,val\n1,x\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+
+        let result = diff_detail(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        assert!(result.has_differences);
+        let removed_table = result.tables.iter().find(|t| t.name == "t2").unwrap();
+        assert!(matches!(removed_table.status, TableStatus::Removed));
+        assert!(removed_table.rows.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_detail_summary_no_changes() -> Result<()> {
+        let dir = tempdir()?;
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alicia\n2,Bob\n")],
+        );
+
+        let result = diff_detail(&left, &right, true, &TableFilter::new(vec![], vec![]))?;
+        assert!(result.has_differences);
+        // In summary mode, changes should be empty
+        assert!(result.tables[0].changes.is_empty());
+        // But row counts should still be present
+        let rows = result.tables[0].rows.as_ref().unwrap();
+        assert_eq!(rows.added, 1);
+        assert_eq!(rows.modified, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_json_valid() -> Result<()> {
+        let dir = tempdir()?;
+        let csv = "id,name\n1,Alice\n2,Bob\n";
+        let left = make_csvdb(dir.path(), "a.csvdb", SCHEMA, &[("t", csv)]);
+        let right = make_csvdb(dir.path(), "b.csvdb", SCHEMA, &[("t", csv)]);
+
+        let json = diff_json(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["has_differences"], false);
+        assert!(parsed["tables"].is_array());
+        assert_eq!(parsed["tables"][0]["status"], "identical");
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_json_with_changes() -> Result<()> {
+        let dir = tempdir()?;
+        let left = make_csvdb(
+            dir.path(),
+            "a.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alice\n")],
+        );
+        let right = make_csvdb(
+            dir.path(),
+            "b.csvdb",
+            SCHEMA,
+            &[("t", "id,name\n1,Alicia\n2,Bob\n")],
+        );
+
+        let json = diff_json(&left, &right, false, &TableFilter::new(vec![], vec![]))?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["has_differences"], true);
+        assert_eq!(parsed["tables"][0]["status"], "modified");
+        assert_eq!(parsed["tables"][0]["rows"]["added"], 1);
+        assert_eq!(parsed["tables"][0]["rows"]["modified"], 1);
+        let changes = parsed["tables"][0]["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 2);
         Ok(())
     }
 

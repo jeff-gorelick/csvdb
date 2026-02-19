@@ -16,6 +16,12 @@ enum SqlFormat {
     Table,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DiffFormat {
+    Text,
+    Json,
+}
+
 #[derive(Parser)]
 #[command(name = "csvdb")]
 #[command(about = "Convert between SQLite/DuckDB databases and CSV directories")]
@@ -213,6 +219,10 @@ enum Commands {
         /// Only show summary counts, not individual rows
         #[arg(long)]
         summary: bool,
+
+        /// Output format (default: text)
+        #[arg(long, value_enum)]
+        format: Option<DiffFormat>,
 
         /// Only include these tables (comma-separated)
         #[arg(long, value_delimiter = ',', conflicts_with = "exclude")]
@@ -419,11 +429,12 @@ fn main() -> ExitCode {
             left,
             right,
             summary,
+            format,
             tables,
             exclude,
         } => {
             let filter = TableFilter::new(tables, exclude);
-            run_diff(&left, &right, summary, &filter)
+            run_diff(&left, &right, summary, format, &filter)
         }
         Commands::Checksum {
             path,
@@ -754,8 +765,22 @@ fn run_validate(path: &Path) -> Result<ExitCode> {
     }
 }
 
-fn run_diff(left: &Path, right: &Path, summary: bool, filter: &TableFilter) -> Result<ExitCode> {
-    let has_differences = diff::diff(left, right, summary, filter)?;
+fn run_diff(
+    left: &Path,
+    right: &Path,
+    summary: bool,
+    format: Option<DiffFormat>,
+    filter: &TableFilter,
+) -> Result<ExitCode> {
+    let has_differences = match format {
+        Some(DiffFormat::Json) => {
+            let result = diff::diff_detail(left, right, summary, filter)?;
+            let json = serde_json::to_string_pretty(&result)?;
+            println!("{json}");
+            result.has_differences
+        }
+        _ => diff::diff(left, right, summary, filter)?,
+    };
     if has_differences {
         Ok(ExitCode::from(1))
     } else {

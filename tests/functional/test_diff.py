@@ -1,5 +1,6 @@
 """Functional tests for the diff command."""
 
+import json
 import sqlite3
 
 
@@ -155,6 +156,91 @@ class TestDiff:
         assert result.returncode == 1
         assert "1 modified" in result.stdout
         assert "category_id" in result.stdout
+
+
+    def test_diff_format_json_identical(self, run_csvdb, temp_dir):
+        """--format json outputs valid JSON for identical databases."""
+        db_path = temp_dir / "same.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO t VALUES (1, 'Alice')")
+        conn.commit()
+        conn.close()
+
+        csvdb1 = temp_dir / "a.csvdb"
+        csvdb2 = temp_dir / "b.csvdb"
+        run_csvdb("to-csvdb", str(db_path), "-o", str(csvdb1), "--force")
+        run_csvdb("to-csvdb", str(db_path), "-o", str(csvdb2), "--force")
+
+        result = run_csvdb("diff", str(csvdb1), str(csvdb2), "--format", "json")
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["has_differences"] is False
+        assert len(data["tables"]) == 1
+        assert data["tables"][0]["status"] == "identical"
+
+    def test_diff_format_json_with_changes(self, run_csvdb, temp_dir):
+        """--format json outputs structured diff data for modified databases."""
+        left_db = temp_dir / "left.sqlite"
+        conn = sqlite3.connect(left_db)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO t VALUES (1, 'Alice')")
+        conn.execute("INSERT INTO t VALUES (2, 'Bob')")
+        conn.commit()
+        conn.close()
+
+        right_db = temp_dir / "right.sqlite"
+        conn = sqlite3.connect(right_db)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO t VALUES (1, 'Alicia')")
+        conn.execute("INSERT INTO t VALUES (3, 'Charlie')")
+        conn.commit()
+        conn.close()
+
+        left_csvdb = temp_dir / "left.csvdb"
+        right_csvdb = temp_dir / "right.csvdb"
+        run_csvdb("to-csvdb", str(left_db), "-o", str(left_csvdb), "--force")
+        run_csvdb("to-csvdb", str(right_db), "-o", str(right_csvdb), "--force")
+
+        result = run_csvdb("diff", str(left_csvdb), str(right_csvdb), "--format", "json", check=False)
+        assert result.returncode == 1
+        data = json.loads(result.stdout)
+        assert data["has_differences"] is True
+        table = data["tables"][0]
+        assert table["status"] == "modified"
+        assert table["rows"]["added"] == 1
+        assert table["rows"]["deleted"] == 1
+        assert table["rows"]["modified"] == 1
+        assert len(table["changes"]) == 3
+
+    def test_diff_format_json_summary(self, run_csvdb, temp_dir):
+        """--format json --summary outputs counts without changes."""
+        left_db = temp_dir / "left.sqlite"
+        conn = sqlite3.connect(left_db)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        conn.execute("INSERT INTO t VALUES (1, 'a')")
+        conn.commit()
+        conn.close()
+
+        right_db = temp_dir / "right.sqlite"
+        conn = sqlite3.connect(right_db)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        conn.execute("INSERT INTO t VALUES (1, 'b')")
+        conn.commit()
+        conn.close()
+
+        left_csvdb = temp_dir / "left.csvdb"
+        right_csvdb = temp_dir / "right.csvdb"
+        run_csvdb("to-csvdb", str(left_db), "-o", str(left_csvdb), "--force")
+        run_csvdb("to-csvdb", str(right_db), "-o", str(right_csvdb), "--force")
+
+        result = run_csvdb("diff", str(left_csvdb), str(right_csvdb), "--format", "json", "--summary", check=False)
+        assert result.returncode == 1
+        data = json.loads(result.stdout)
+        assert data["has_differences"] is True
+        table = data["tables"][0]
+        assert table["rows"]["modified"] == 1
+        assert len(table["changes"]) == 0
 
 
 class TestDiffEdgeCases:

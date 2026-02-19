@@ -37,7 +37,7 @@ unless ($lib) {
 local $ENV{CSVDB_FFI_LIB} = $lib;
 require Csvdb;
 
-plan tests => 25;
+plan tests => 27;
 
 # Helper: create a sample .csvdb directory
 sub make_csvdb {
@@ -181,6 +181,11 @@ my $inc_dir = File::Spec->catdir($tmpdir, "incremental.csvdb");
 my $inc_json = Csvdb::to_csvdb_incremental(input => $sqlite_path, output => $inc_dir);
 like($inc_json, qr/"path"/, "to_csvdb_incremental returns JSON with path");
 like($inc_json, qr/"added"/, "to_csvdb_incremental returns JSON with added");
+
+# --- Test diff_json ---
+my $diff_json = Csvdb::diff_json(left => $csvdb_dir, right => $csvdb_dir);
+like($diff_json, qr/"has_differences":\s*false/, "diff_json of identical dirs shows no differences");
+like($diff_json, qr/"identical"/, "diff_json of identical dirs has identical status");
 
 # --- Test init with detect_pk disabled ---
 my $raw_dir2 = File::Spec->catdir($tmpdir, "raw2");

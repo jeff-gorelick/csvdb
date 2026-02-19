@@ -256,6 +256,80 @@ fn test_diff_identical() {
 }
 
 #[test]
+fn test_diff_json_identical() {
+    let dir = tempdir().unwrap();
+    let csvdb_dir = make_test_csvdb(dir.path());
+    let input = c(csvdb_dir.to_str().unwrap());
+
+    let json = unsafe {
+        read_and_free(csvdb_diff_json(
+            input.as_ptr(),
+            input.as_ptr(),
+            0,
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
+    assert!(
+        json.contains("\"has_differences\": false"),
+        "expected no differences, got: {json}"
+    );
+    assert!(
+        json.contains("\"identical\""),
+        "expected identical status, got: {json}"
+    );
+    // Verify valid JSON
+    let _parsed: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+}
+
+#[test]
+fn test_diff_json_different() {
+    let dir = tempdir().unwrap();
+
+    let dir1 = dir.path().join("a.csvdb");
+    fs::create_dir(&dir1).unwrap();
+    fs::write(
+        dir1.join("schema.sql"),
+        "CREATE TABLE \"t\" (\"id\" INTEGER PRIMARY KEY, \"v\" TEXT);\n",
+    )
+    .unwrap();
+    fs::write(dir1.join("t.csv"), "id,v\n1,hello\n").unwrap();
+
+    let dir2 = dir.path().join("b.csvdb");
+    fs::create_dir(&dir2).unwrap();
+    fs::write(
+        dir2.join("schema.sql"),
+        "CREATE TABLE \"t\" (\"id\" INTEGER PRIMARY KEY, \"v\" TEXT);\n",
+    )
+    .unwrap();
+    fs::write(dir2.join("t.csv"), "id,v\n1,world\n").unwrap();
+
+    let left = c(dir1.to_str().unwrap());
+    let right = c(dir2.to_str().unwrap());
+
+    let json = unsafe {
+        read_and_free(csvdb_diff_json(
+            left.as_ptr(),
+            right.as_ptr(),
+            0,
+            ptr::null(),
+            ptr::null(),
+        ))
+    };
+    assert!(
+        json.contains("\"has_differences\": true"),
+        "expected differences, got: {json}"
+    );
+    assert!(
+        json.contains("\"modified\""),
+        "expected modified status, got: {json}"
+    );
+    // Verify valid JSON
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+    assert!(parsed["tables"][0]["changes"].as_array().unwrap().len() > 0);
+}
+
+#[test]
 fn test_diff_different() {
     let dir = tempdir().unwrap();
 
