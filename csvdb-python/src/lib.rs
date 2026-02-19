@@ -334,8 +334,8 @@ fn diff_detail_py(
     exclude: Vec<String>,
 ) -> PyResult<PyObject> {
     let filter = TableFilter::new(tables, exclude);
-    let result =
-        diff::diff_detail(Path::new(left), Path::new(right), summary, &filter).map_err(to_py_err)?;
+    let result = diff::diff_detail(Path::new(left), Path::new(right), summary, &filter)
+        .map_err(to_py_err)?;
 
     let dict = PyDict::new(py);
     dict.set_item("left", &result.left)?;
