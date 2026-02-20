@@ -308,6 +308,55 @@ csvdb to-parquetdb original.csvdb/
 csvdb checksum original.parquetdb/   # a1b2c3... (same!)
 ```
 
+### diff — Compare two databases
+
+```bash
+csvdb diff v1.csvdb/ v2.csvdb/
+csvdb diff base.sqlite modified.csvdb/
+csvdb diff --format json v1.csvdb/ v2.csvdb/
+```
+
+Compares two databases or csvdb directories and reports row-level differences: added, deleted, and modified rows with column-level detail. Works across formats (e.g. SQLite vs csvdb).
+
+Returns exit code 0 if identical, 1 if differences found.
+
+Options:
+- `--summary` - Show only counts, not individual row changes
+- `--format <text|json>` - Output format (default: text)
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
+
+### merge — Three-way merge
+
+```bash
+csvdb merge base.csvdb/ left.csvdb/ right.csvdb/ -o merged.csvdb/
+csvdb merge base.sqlite left.csvdb/ right.csvdb/ -o merged.csvdb/ --strategy ours
+csvdb merge base.csvdb/ left.csvdb/ right.csvdb/ -o merged.csvdb/ --format json
+```
+
+Three-way merge of databases using a common ancestor (base) and two branches (left/right). Produces a merged output directory and reports any conflicts. Works across formats.
+
+Per-row merge logic:
+- **Unchanged on both sides** — keep as-is
+- **Changed on one side only** — take that side's version
+- **Changed on both to same value** — take either (converged)
+- **Changed on both to different values** — conflict
+- **Added on one side** — include
+- **Added on both with same values** — deduplicate
+- **Added on both with different values** — conflict
+- **Deleted on one side, unchanged on other** — delete
+- **Deleted on one side, modified on other** — conflict
+
+Returns exit code 0 for clean merge, 1 if conflicts detected.
+
+Options:
+- `-o, --output <dir>` - Output directory for merged result (required)
+- `--strategy <normal|ours|theirs>` - Conflict resolution strategy (default: normal)
+- `--format <text|json>` - Output format (default: text)
+- `--force` - Overwrite existing output directory
+- `--tables <list>` - Only include these tables (comma-separated)
+- `--exclude <list>` - Exclude these tables (comma-separated)
+
 ## Primary Key Requirement
 
 By default, every table must have an explicit primary key. Rows are sorted by primary key when exporting to CSV. By enforcing a stable row order, csvdb guarantees that identical data always produces identical CSV files, making git diffs meaningful and noise-free.
@@ -601,6 +650,11 @@ rows = csvdb.sql("mydb.csvdb", "SELECT name, COUNT(*) AS n FROM users GROUP BY n
 # Diff two databases
 has_diff = csvdb.diff("v1.csvdb", "v2.csvdb")
 
+# Three-way merge
+result = csvdb.merge("base.csvdb", "left.csvdb", "right.csvdb", "merged.csvdb", force=True)
+# result: {"has_conflicts": False, "tables": [...]}
+# Use strategy="ours" or strategy="theirs" to auto-resolve conflicts
+
 # Validate structure
 info = csvdb.validate("mydb.csvdb")
 
@@ -686,6 +740,10 @@ my $csv = Csvdb::sql(path => "mydb.csvdb", query => "SELECT * FROM users");
 # Diff (returns 0=identical, 1=differences)
 my $rc = Csvdb::diff(left => "v1.csvdb", right => "v2.csvdb");
 
+# Three-way merge (returns JSON report)
+my $json = Csvdb::merge(base => "base.csvdb", left => "left.csvdb",
+                        right => "right.csvdb", output => "merged.csvdb", force => 1);
+
 # Validate (returns 0=valid, 1=errors)
 my $rc = Csvdb::validate(input => "mydb.csvdb");
 ```
@@ -713,6 +771,7 @@ csvdb/                    # Core library + CLI binary
       checksum.rs        # Format-independent checksums
       validate.rs        # Structural integrity checks
       diff.rs            # Compare two databases
+      merge.rs           # Three-way merge
       sql.rs             # Read-only SQL queries
     core/
       schema.rs          # Parse/emit schema.sql, type normalization
